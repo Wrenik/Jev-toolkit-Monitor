@@ -9,8 +9,10 @@ jobs:
   python:
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.11", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
@@ -19,10 +21,18 @@ jobs:
           path: usage
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-      # The dependency repo is installed editable from its checkout, so CI works before any release.
+          python-version: ${{ matrix.python }}
+      # Dependency repositories are installed editable from their checkouts, so CI works before any release.
       - run: python -m pip install -e ./usage
       - run: python -m pip install -e ".[dev]" --no-deps
+      # TODO(round 3): src/ and tests/ were being edited when the shared config was added and are not yet ruff-format /
+      # mypy clean; run `ruff format . && ruff check --fix . && mypy`, then delete continue-on-error below.
+      - run: python -m ruff check .
+        continue-on-error: true
+      - run: python -m ruff format --check .
+        continue-on-error: true
+      - run: python -m mypy
+        continue-on-error: true
       # Offline tests only: no API key is configured in CI and none is needed.
       - run: python -m pytest
         env:

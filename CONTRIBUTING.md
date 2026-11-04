@@ -9,3 +9,5 @@ Thanks for looking. This is a small learning project, so the bar is "clear and h
 5. Never use the Jev SDK directly (it lives in Jev-toolkit-usage, `jev_core`); this tool talks to the `Judge` interface so the judge can be replaced by a local or European model.
 
 Good first contributions: a bypass or false positive with an inert example (add it to a new held-out set, never tune rules on a set you report on), a clearer rule explanation in the engine's PLAIN table.
+
+Style and types: `python -m ruff format . && python -m ruff check . && python -m mypy` must pass (CI runs the same checks on Linux, Windows and macOS, Python 3.11 and 3.13). Install the tools with `pip install -e ".[dev]"`.

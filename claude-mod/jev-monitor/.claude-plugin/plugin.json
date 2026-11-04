@@ -1,8 +1,10 @@
 {
   "name": "jev-monitor",
   "version": "0.1.0",
-  "description": "Watches the agent's own tool calls (not your typing): flags or blocks edits to its instruction files, writes outside the project, unlisted network targets and other risky shapes. Starts in monitor mode (log and warn only). Reduces risk; does not make an agent safe.",
-  "author": { "name": "Henric" },
+  "description": "EXPERIMENTAL. Watches the agent's own tool calls (not your typing): flags or blocks edits to its instruction files, writes outside the project, unlisted network targets and other risky shapes. Starts in monitor mode (log and warn only). Reduces risk; does not make an agent safe.",
+  "author": {
+    "name": "AUTHOR_NAME_TODO"
+  },
   "license": "MIT",
   "userConfig": {
     "python": {
@@ -11,5 +13,7 @@
       "description": "Command or path of the Python that has jev-toolkit-monitor installed. Empty: JEV_PYTHON, else `python` (Windows) or `python3` on PATH.",
       "default": ""
     }
-  }
+  },
+  "homepage": "https://github.com/Wrenik/Jev-toolkit-Monitor",
+  "repository": "https://github.com/Wrenik/Jev-toolkit-Monitor"
 }

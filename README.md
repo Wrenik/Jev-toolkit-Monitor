@@ -1,10 +1,15 @@
 # Jev-toolkit-Monitor (EXPERIMENTAL)
 
+[![tests](https://github.com/Wrenik/Jev-toolkit-Monitor/actions/workflows/tests.yml/badge.svg)](https://github.com/Wrenik/Jev-toolkit-Monitor/actions/workflows/tests.yml)
+![python](https://img.shields.io/badge/python-3.11%2B-blue)
+![status](https://img.shields.io/badge/status-experimental-red)
+[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+(The badges start working once the repository is public.)
+
 An outside monitor for a Claude Code agent, in the spirit of a firewall / IDS / IPS. It watches what the **agent** does (its tool calls, never your typing) and compares that with your instructions and a small policy file: edits to the agent's own instruction files, writes outside the project, outbound network targets that are not on a list, persistence, secret reads followed by uploads, rate and volume spikes, and shell shapes it cannot analyse. The response ladder is **log, warn, block, kill**; kill is the last rung and is always logged. The rules live outside the agent's context, so context compaction cannot touch them. Deterministic checks decide first; an optional judgement model ([TypeSafe Jev](https://docs.typesafe.ai)) is a bounded second opinion for inconclusive cases only.
 
-Part of the Jev tool family; the shared judge layer lives in [Jev-toolkit-usage](https://github.com/Wrenik/Jev-toolkit-usage), and the siblings are [Compiler](https://github.com/Wrenik/Jev-toolkit-Compiler), [Scanner](https://github.com/Wrenik/Jev-toolkit-Scanner), [FactCheck](https://github.com/Wrenik/Jev-toolkit-FactCheck) and [Sources](https://github.com/Wrenik/Jev-toolkit-Sources). (Links work once the repositories are public.)
-
-## Status and limits: read this first
+## Status and limits
 
 This is a **learning project, not a security product**. **A monitor reduces risk. It does not make an agent safe.** Honest numbers, from [docs/AGENT_MONITOR.md](docs/AGENT_MONITOR.md):
 
@@ -15,11 +20,9 @@ This is a **learning project, not a security product**. **A monitor reduces risk
 * The policy, state and log live in a folder the agent can write to; the guarantee is "detects and logs the obvious routes", not "prevents". Known bypasses (script files, allowlisted-host exfiltration, MCP and subagent paths, DNS exfiltration, mass harvesting, no view of the model's thinking ...) are listed in the doc.
 * Verified in a real **headless** Claude Code session (block, note and kill all behaved as designed). Not verified: desktop pop-ups, typed `/jevmonitor` commands, subagent and parallel calls, long sessions, real WebFetch/MCP traffic. The doc has a 5-minute checklist.
 
-## Privacy
-
-Everything runs on your machine except the optional second opinion: for inconclusive (medium-severity) calls only, a redacted one-line summary of the call plus a redacted 80-character summary of your task is sent to TypeSafe. No raw prompts are stored or sent. `[judge] enabled = false` in the policy file, or `JEV_MONITOR_JUDGE=off`, keeps everything local, and without a key nothing is ever sent. **Jev is used because it is the only model of its kind on the market today, not because sending text to a US company is the goal. The plan is to replace it with a local model or a European provider** through the `Judge` interface in `jev_core`; this repository never imports the TypeSafe SDK. Jev's data location is not stated in its documentation (checked 2026-10-30).
-
 ## Install
+
+Want all six tools? Use [the install script](https://github.com/Wrenik/Jev-toolkit-usage/blob/main/docs/INSTALL_ALL.md) (`scripts/install_all.ps1` or `.sh` in Jev-toolkit-usage) instead of the steps below.
 
 Requires Python 3.11+ and the base package [Jev-toolkit-usage](https://github.com/Wrenik/Jev-toolkit-usage) (the judge layer, settings and data location).
 
@@ -35,7 +38,7 @@ pip install "git+https://github.com/Wrenik/Jev-toolkit-Monitor.git"
 
 Data (policy, state, log, the optional TypeSafe key in `.env`) lives in `JEV_HOME` (default `~/.jev-toolkit`), shared with the other tools; `JEV_MONITOR_VAR` overrides the folder for this tool, and a `.env` or `var/` folder in the current directory wins during development.
 
-## Try it in 60 seconds (offline, no key)
+## Quick try (offline, no key)
 
 ```bash
 python -m jev_monitor check Bash '{"command": "echo x >> CLAUDE.md"}'   # what would it say? (instruction-file change)
@@ -76,14 +79,29 @@ claude-mod/jev-monitor/ the Claude Code mod (TypeScript), example policy, and it
 docs/AGENT_MONITOR.md   design, hooks verified vs not, checks, path matrix, evaluation, known bypasses, prior art
 ```
 
+## Privacy
+
+Everything runs on your machine except the optional second opinion: for inconclusive (medium-severity) calls only, a redacted one-line summary of the call plus a redacted 80-character summary of your task is sent to TypeSafe. No raw prompts are stored or sent. `[judge] enabled = false` in the policy file, or `JEV_MONITOR_JUDGE=off`, keeps everything local, and without a key nothing is ever sent. **Jev is used because, as of today, it is the only model of its kind on the market, not because sending data to a US company is the goal. The plan is to replace it with a local model or a European provider** through the `Judge` interface in `jev_core`; this repository never imports the TypeSafe SDK. Jev's data location is not stated in its documentation (checked 2026-10-30).
+
 ## Prior art
 
 Credited in detail in the doc ("Prior art"): Claude Code hooks and permissions, Anthropic's auto mode, community PreToolUse guards, Meta's LlamaFirewall / AlignmentCheck, CaMeL, Invariant Labs Guardrails, Falco and IDS/IPS in general. No third-party code or rule list is copied; every rule and scenario is hand-written.
 
-## Contributing and feedback
+## The Jev toolkit family
+
+| Repository | What it is | Depends on |
+|---|---|---|
+| [Jev-toolkit-usage](https://github.com/Wrenik/Jev-toolkit-usage) | `jev_core` (judge interface, Jev adapter, cache, decision log, redaction, settings and data location) and the model/effort router | - |
+| [Jev-toolkit-Compiler](https://github.com/Wrenik/Jev-toolkit-Compiler) | context log, search and a compact/clear advisor | usage |
+| [Jev-toolkit-Scanner](https://github.com/Wrenik/Jev-toolkit-Scanner) | prompt-injection scanner (experimental) | usage |
+| **Jev-toolkit-Monitor** (this one) | agent monitor (experimental) | usage |
+| [Jev-toolkit-FactCheck](https://github.com/Wrenik/Jev-toolkit-FactCheck) | fact checker with hover evidence | usage (Scanner optional) |
+| [Jev-toolkit-Sources](https://github.com/Wrenik/Jev-toolkit-Sources) | source restriction (allowlist policy) | usage, FactCheck |
+
+All six on one machine: [docs/INSTALL_ALL.md](https://github.com/Wrenik/Jev-toolkit-usage/blob/main/docs/INSTALL_ALL.md) (a script does it). The links work once the repositories are public.
+
+## Contributing, security, license
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md). Bypasses and false alarms (with inert examples) are the most useful reports.
 
-## License
-
-MIT, see [LICENSE](LICENSE).
+Licensed under the [MIT License](LICENSE).

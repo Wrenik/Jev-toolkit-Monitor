@@ -31,6 +31,8 @@ PLAIN = {
     "canary-token": "a decoy secret appears in this call",
     "write-outside-scope": "this would write outside the project folder",
     "persistence-file": "this would edit a startup, login or system file",
+    "destructive-system": "this could wipe a disk, clear logs, stop the machine or hand out elevated rights",
+    "log-tamper": "this changes shell history or system logs, which hides what happened",
     "persistence-command": "this would make something run later, at login, or whenever git or the editor starts",
     "container-escape": "this starts a container with access to the host itself",
     "security-setting-change": "this switches off a protection (antivirus, firewall, TLS or execution policy)",

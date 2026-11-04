@@ -1,4 +1,4 @@
-"""python -m jev_monitor serve [port] | hook | check TOOL JSON | status | mode monitor|enforce | reset | report | policy-check | eval
+"""python -m jev_monitor serve [port] | hook | hook-snippet | check TOOL JSON | version | status | mode monitor|enforce | reset | report | policy-check | eval
 
 `reset`, `mode` and `status` work on the state file directly, so they work from a plain terminal even when a
 session is latched and the server is busy or gone. `hook` is the entry point for a classic Claude Code
@@ -117,7 +117,8 @@ def main(argv: list[str]) -> int:  # noqa: C901
             print(f"policy INVALID: {err}")
             return 2
         snap = State(VAR / "monitor-state.json").snapshot()
-        print(json.dumps({"policy_mode": policy.mode, **snap}, indent=1, default=str))
+        files = {"policy": str(pfile) if pfile.exists() else "(none: built-in defaults)", "log": str(VAR / "monitor-log.jsonl"), "state": str(VAR / "monitor-state.json")}
+        print(json.dumps({"policy_mode": policy.mode, **snap, "files": files}, indent=1, default=str))
         return 0
     if cmd == "report":
         print(would_block_report(read_records(VAR / "monitor-log.jsonl")))
@@ -132,9 +133,33 @@ def main(argv: list[str]) -> int:  # noqa: C901
         print(f"OK ({'file ' + str(pfile) if pfile.exists() else 'built-in defaults'}): mode={p.mode}, hosts={len(p.allow_hosts)}")
         return 0
     if cmd == "check" and len(argv) == 3:
+        try:
+            tool_input = json.loads(argv[2])
+        except ValueError as err:
+            print(f"the second argument must be JSON, e.g. '{{\"command\": \"ls\"}}' ({err})")
+            return 2
+        if not isinstance(tool_input, dict):
+            print("the JSON must be an object, e.g. '{\"command\": \"ls\"}'")
+            return 2
         m = build_monitor(VAR, with_judge=False)
-        call = call_from_body({"tool": argv[1], "input": json.loads(argv[2]), "cwd": os.getcwd()})
+        call = call_from_body({"tool": argv[1], "input": tool_input, "cwd": os.getcwd()})
         print(json.dumps(m.check(call).to_dict(), indent=1))
+        return 0
+    if cmd == "hook-snippet":
+        # Printed, never written: you paste it into .claude/settings.json (project) or ~/.claude/settings.json (all projects).
+        hook = {"type": "command", "command": f'"{sys.executable}" -m jev_monitor hook', "timeout": 10, "onFailure": "block"}
+        print(json.dumps({"hooks": {"PreToolUse": [{"matcher": "Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit|WebFetch", "hooks": [hook]}]}}, indent=2))
+        return 0
+    if cmd in ("-V", "--version", "version"):
+        from importlib.metadata import PackageNotFoundError, version
+
+        try:
+            print("jev-toolkit-monitor", version("jev-toolkit-monitor"))
+        except PackageNotFoundError:
+            print("jev-toolkit-monitor (not installed as a package)")
+        return 0
+    if cmd in ("-h", "--help", "help"):
+        print(__doc__)
         return 0
     if cmd == "eval":
         from .evaluate import main as eval_main

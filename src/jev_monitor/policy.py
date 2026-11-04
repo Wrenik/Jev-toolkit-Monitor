@@ -52,7 +52,8 @@ DEFAULT_ALLOW_HOSTS = [
     "localhost", "127.0.0.1", "::1", "github.com", "api.github.com", "raw.githubusercontent.com", "codeload.github.com",
     "pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "www.npmjs.com", "crates.io", "static.crates.io",
     "docs.python.org", "developer.mozilla.org", "docs.anthropic.com", "code.claude.com", "docs.claude.com",
-    "stackoverflow.com", "huggingface.co",
+    "stackoverflow.com", "huggingface.co", "docs.rs", "doc.rust-lang.org", "pkg.go.dev", "proxy.golang.org", "golang.org", "go.dev", "nodejs.org",
+    "learn.microsoft.com", "en.wikipedia.org", "readthedocs.io", "rfc-editor.org",
 ]
 
 

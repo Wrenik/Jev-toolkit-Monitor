@@ -54,6 +54,7 @@ class Analysis:
     persist: list[str] = field(default_factory=list)  # cron, schtasks, Run keys, services, launch agents
     words: list[str] = field(default_factory=list)  # literal path-ish arguments, for secret/canary scans
     bulk: list[str] = field(default_factory=list)  # git reset --hard, checkout . ...
+    system: list[str] = field(default_factory=list)  # disk wipes, log clearing, shutdown, setuid bits
     commands: list[str] = field(default_factory=list)
     mentions: list[str] = field(default_factory=list)  # raw text pieces worth a substring scan
 
@@ -64,6 +65,7 @@ class Analysis:
         self.persist += other.persist
         self.words += other.words
         self.bulk += other.bulk
+        self.system += other.system
         self.commands += other.commands
         self.mentions += other.mentions
 
@@ -76,6 +78,7 @@ class Segment:
     piped_to_next: bool = False
     heredoc: str | None = None
     substs: list[str] = field(default_factory=list)  # text inside $( ) / backticks / <( )
+    call: bool = False  # PowerShell: started by the call operator `&`, so a leading $variable IS the command
 
 
 # ------------------------------------------------------------------ tokenizer
@@ -102,205 +105,262 @@ def _match_paren(text: str, i: int) -> int:
     return len(text)
 
 
-def tokenize(text: str, ps: bool = False) -> list[Segment]:
-    segs: list[Segment] = [Segment()]
-    word: list[str] = []
-    state = {"dyn": False, "glob": False, "quoted": False, "has": False}
-    pending_heredocs: list[tuple[str, bool]] = []  # (delimiter, strip tabs)
-    redirect_op: str | None = None
-    i, n = 0, len(text)
-    esc = "`" if ps else "\\"
+class _Lexer:
+    """One pass over the command text. Each `_try_*` method consumes input and returns True, or returns False untouched."""
 
-    def flush() -> None:
-        nonlocal redirect_op
-        if not state["has"]:
+    def __init__(self, text: str, ps: bool) -> None:
+        self.text, self.n, self.ps = text, len(text), ps
+        self.esc = "`" if ps else "\\"
+        self.i = 0
+        self.segs: list[Segment] = [Segment()]
+        self.word: list[str] = []
+        self.dyn = self.glob = self.quoted = self.has = False
+        self.pending_heredocs: list[tuple[str, bool]] = []  # (delimiter, strip tabs)
+        self.redirect_op: str | None = None
+
+    # -- word and segment bookkeeping
+    def _reset_word(self) -> None:
+        self.word.clear()
+        self.dyn = self.glob = self.quoted = self.has = False
+
+    def flush(self) -> None:
+        if not self.has:
             return
-        tok = Tok("".join(word), state["dyn"], state["glob"], state["quoted"])
-        word.clear()
-        state.update(dyn=False, glob=False, quoted=False, has=False)
-        if redirect_op is not None:
-            segs[-1].redirects.append((redirect_op, tok))
-            redirect_op = None
+        tok = Tok("".join(self.word), self.dyn, self.glob, self.quoted)
+        self._reset_word()
+        if self.redirect_op is not None:
+            self.segs[-1].redirects.append((self.redirect_op, tok))
+            self.redirect_op = None
         else:
-            segs[-1].words.append(tok)
+            self.segs[-1].words.append(tok)
 
-    def new_segment(pipe: bool = False) -> None:
-        flush()
+    def new_segment(self, pipe: bool = False) -> None:
+        self.flush()
         if pipe:
-            segs[-1].piped_to_next = True
-        seg = Segment(piped_from_prev=pipe)
-        segs.append(seg)
+            self.segs[-1].piped_to_next = True
+        self.segs.append(Segment(piped_from_prev=pipe))
 
-    while i < n:
-        c = text[i]
-        if c in " \t\r":
-            flush()
-            i += 1
-            continue
-        if c == "\n":
-            flush()
-            if pending_heredocs:
-                i += 1
-                for delim, strip in pending_heredocs:
-                    body: list[str] = []
-                    while i < n:
-                        j = text.find("\n", i)
-                        line = text[i:] if j == -1 else text[i:j]
-                        i = n if j == -1 else j + 1
-                        if (line.strip("\t") if strip else line).rstrip("\r") == delim:
-                            break
-                        body.append(line)
-                    segs[-1].heredoc = ("\n".join(body))
-                pending_heredocs.clear()
-                new_segment()
-                continue
-            new_segment()
-            i += 1
-            continue
-        if c == "#" and not state["has"] and (i == 0 or text[i - 1] in " \t\n;&|("):
-            while i < n and text[i] != "\n":
-                i += 1
-            continue
-        if c == "'" and not ps or (c == "'" and ps):
-            j = text.find("'", i + 1)
-            j = n if j == -1 else j
-            chunk = text[i + 1 : j]
-            if ps:
-                chunk = chunk.replace("''", "'")
-            word.append(chunk)
-            state["has"] = state["quoted"] = True
-            i = j + 1
-            continue
-        if c == '"':
-            state["has"] = state["quoted"] = True
-            i += 1
-            while i < n and text[i] != '"':
-                d = text[i]
-                if d == esc and i + 1 < n and (ps or text[i + 1] in '"\\$`\n'):
-                    word.append(text[i + 1])
-                    i += 2
-                    continue
-                if d == "$" and text.startswith("$(", i):
-                    end = _match_paren(text, i + 1)
-                    segs[-1].substs.append(text[i + 2 : end])
-                    word.append(text[i : end + 1])
-                    state["dyn"] = True
-                    i = end + 1
-                    continue
-                if d == "$" or d == "`":
-                    state["dyn"] = True
-                    if d == "`":
-                        j = text.find("`", i + 1)
-                        j = n if j == -1 else j
-                        segs[-1].substs.append(text[i + 1 : j])
-                        word.append(text[i : j + 1])
-                        i = j + 1
-                        continue
-                word.append(d)
-                i += 1
-            i += 1
-            continue
-        if c == esc and i + 1 < n:
-            word.append(text[i + 1])
-            state["has"] = True
-            i += 2
-            continue
-        if c == "$" and text.startswith("$(", i):
-            end = _match_paren(text, i + 1)
-            segs[-1].substs.append(text[i + 2 : end])
-            word.append(text[i : end + 1])
-            state.update(dyn=True, has=True)
-            i = end + 1
-            continue
-        if c == "`" and not ps:
-            j = text.find("`", i + 1)
-            j = n if j == -1 else j
-            segs[-1].substs.append(text[i + 1 : j])
-            word.append(text[i : j + 1])
-            state.update(dyn=True, has=True)
-            i = j + 1
-            continue
-        if c in "<>" and text.startswith(("<(", ">("), i):
-            end = _match_paren(text, i + 1)
-            segs[-1].substs.append(text[i + 2 : end])
-            word.append(text[i : end + 1])
-            state.update(dyn=True, has=True)
-            i = end + 1
-            continue
-        if c in "<>" or (c == "&" and text.startswith("&>", i)):
-            # a bare digit word right before is an fd number: 2> file
-            if state["has"] and "".join(word).isdigit() and not state["quoted"]:
-                word.clear()
-                state.update(dyn=False, glob=False, quoted=False, has=False)
-            else:
-                flush()
-            op = ""
-            for cand in ("<<<", "<<-", "<<", ">>", ">|", "&>>", "&>", ">&", "<&", ">", "<"):
-                if text.startswith(cand, i):
-                    op = cand
+    def _subst(self, start: int, body_from: int, end: int) -> None:
+        """A $( ), backtick or <( ) piece text[start:end+1]: remember its body, keep the raw text in the word."""
+        self.segs[-1].substs.append(self.text[body_from:end])
+        self.word.append(self.text[start : end + 1])
+
+    # -- handlers, tried in this order
+    def _try_blank(self) -> bool:
+        if self.text[self.i] not in " \t\r":
+            return False
+        self.flush()
+        self.i += 1
+        return True
+
+    def _read_heredocs(self) -> None:
+        text, n = self.text, self.n
+        for delim, strip in self.pending_heredocs:
+            body: list[str] = []
+            while self.i < n:
+                j = text.find("\n", self.i)
+                line = text[self.i :] if j == -1 else text[self.i : j]
+                self.i = n if j == -1 else j + 1
+                if (line.strip("\t") if strip else line).rstrip("\r") == delim:
                     break
-            i += len(op)
-            if op in ("<<", "<<-"):
-                j = i
-                while j < n and text[j] in " \t":
-                    j += 1
-                k = j
-                dq = ""
-                if k < n and text[k] in "'\"":
-                    dq = text[k]
-                    k = text.find(dq, k + 1)
-                    delim = text[j + 1 : k if k != -1 else n]
-                    i = (k + 1) if k != -1 else n
-                else:
-                    while k < n and text[k] not in " \t\n;&|<>()":
-                        k += 1
-                    delim = text[j:k]
-                    i = k
-                pending_heredocs.append((delim, op == "<<-"))
-                continue
-            redirect_op = op
-            continue
-        if ps and c == "(" and (segs[-1].words or state["has"] or redirect_op is not None):
-            end = _match_paren(text, i)
-            segs[-1].substs.append(text[i + 1 : end])
-            word.append(text[i : end + 1])
-            state.update(dyn=True, has=True)
-            i = end + 1
-            continue
-        if c in ";|&()" or (c in "{}" and ps):
-            if c == "|" and text.startswith("||", i):
-                new_segment()
-                i += 2
-            elif c == "&" and text.startswith("&&", i):
-                new_segment()
-                i += 2
-            elif c == "|":
-                flush()
-                i += 2 if text.startswith("|&", i) else 1
-                new_segment(pipe=True)
-            else:
-                flush()
-                i += 1
-                new_segment()
-            continue
-        if c in "{}" and not ps and not state["has"] and (i + 1 >= n or text[i + 1].isspace() or text[i + 1] == ";"):
-            i += 1  # a lone { or } is shell grouping, not an argument
-            continue
-        if c == "$" or (ps and c == "@"):
-            state.update(dyn=True, has=True)
-            if text.startswith("${", i):
-                j = text.find("}", i)
+                body.append(line)
+            self.segs[-1].heredoc = "\n".join(body)
+        self.pending_heredocs.clear()
+
+    def _try_newline(self) -> bool:
+        if self.text[self.i] != "\n":
+            return False
+        self.flush()
+        self.i += 1
+        if self.pending_heredocs:
+            self._read_heredocs()
+        self.new_segment()
+        return True
+
+    def _try_comment(self) -> bool:
+        i, text = self.i, self.text
+        if text[i] != "#" or self.has or not (i == 0 or text[i - 1] in " \t\n;&|("):
+            return False
+        while self.i < self.n and text[self.i] != "\n":
+            self.i += 1
+        return True
+
+    def _try_single_quote(self) -> bool:
+        if self.text[self.i] != "'":
+            return False
+        j = self.text.find("'", self.i + 1)
+        j = self.n if j == -1 else j
+        chunk = self.text[self.i + 1 : j]
+        self.word.append(chunk.replace("''", "'") if self.ps else chunk)
+        self.has = self.quoted = True
+        self.i = j + 1
+        return True
+
+    def _try_double_quote(self) -> bool:
+        text, n = self.text, self.n
+        if text[self.i] != '"':
+            return False
+        self.has = self.quoted = True
+        self.i += 1
+        while self.i < n and text[self.i] != '"':
+            i, d = self.i, text[self.i]
+            if d == self.esc and i + 1 < n and (self.ps or text[i + 1] in '"\\$`\n'):
+                self.word.append(text[i + 1])
+                self.i += 2
+            elif d == "$" and text.startswith("$(", i):
+                end = _match_paren(text, i + 1)
+                self._subst(i, i + 2, end)
+                self.dyn = True
+                self.i = end + 1
+            elif d == "`":
+                j = text.find("`", i + 1)
                 j = n if j == -1 else j
-                word.append(text[i : j + 1])
-                i = j + 1
+                self._subst(i, i + 1, j)
+                self.dyn = True
+                self.i = j + 1
+            else:
+                if d == "$":
+                    self.dyn = True
+                self.word.append(d)
+                self.i += 1
+        self.i += 1
+        return True
+
+    def _try_escape(self) -> bool:
+        if self.text[self.i] != self.esc or self.i + 1 >= self.n:
+            return False
+        self.word.append(self.text[self.i + 1])
+        self.has = True
+        self.i += 2
+        return True
+
+    def _try_substitution(self) -> bool:
+        text, i = self.text, self.i
+        c = text[i]
+        if c == "$" and text.startswith("$(", i):
+            end, body = _match_paren(text, i + 1), i + 2
+        elif c == "`" and not self.ps:
+            j = text.find("`", i + 1)
+            end, body = (self.n if j == -1 else j), i + 1
+        elif c in "<>" and text.startswith(("<(", ">("), i):
+            end, body = _match_paren(text, i + 1), i + 2
+        else:
+            return False
+        self._subst(i, body, end)
+        self.dyn = self.has = True
+        self.i = end + 1
+        return True
+
+    def _heredoc_delimiter(self) -> str:
+        """Parses the delimiter after `<<` / `<<-`; leaves self.i behind it."""
+        text, n = self.text, self.n
+        j = self.i
+        while j < n and text[j] in " \t":
+            j += 1
+        k = j
+        if k < n and text[k] in "'\"":
+            k = text.find(text[k], k + 1)
+            delim = text[j + 1 : k if k != -1 else n]
+            self.i = (k + 1) if k != -1 else n
+        else:
+            while k < n and text[k] not in " \t\n;&|<>()":
+                k += 1
+            delim = text[j:k]
+            self.i = k
+        return delim
+
+    def _try_redirect(self) -> bool:
+        text, i = self.text, self.i
+        c = text[i]
+        if not (c in "<>" or (c == "&" and text.startswith("&>", i))):
+            return False
+        if self.has and "".join(self.word).isdigit() and not self.quoted:
+            self._reset_word()  # a bare digit word right before is an fd number: 2> file
+        else:
+            self.flush()
+        op = next((cand for cand in ("<<<", "<<-", "<<", ">>", ">|", "&>>", "&>", ">&", "<&", ">", "<") if text.startswith(cand, i)), "")
+        self.i += len(op)
+        if op in ("<<", "<<-"):
+            self.pending_heredocs.append((self._heredoc_delimiter(), op == "<<-"))
+        else:
+            self.redirect_op = op
+        return True
+
+    def _try_ps_paren(self) -> bool:
+        if not (self.ps and self.text[self.i] == "(" and (self.segs[-1].words or self.has or self.redirect_op is not None)):
+            return False
+        end = _match_paren(self.text, self.i)
+        self._subst(self.i, self.i + 1, end)
+        self.dyn = self.has = True
+        self.i = end + 1
+        return True
+
+    def _try_operator(self) -> bool:
+        text, i = self.text, self.i
+        c = text[i]
+        if not (c in ";|&()" or (c in "{}" and self.ps)):
+            return False
+        if c == "|" and text.startswith("||", i):
+            self.new_segment()
+            self.i += 2
+        elif c == "&" and text.startswith("&&", i):
+            self.new_segment()
+            self.i += 2
+        elif c == "|":
+            self.flush()
+            self.i += 2 if text.startswith("|&", i) else 1
+            self.new_segment(pipe=True)
+        elif c == "&" and self.ps:
+            self.new_segment()
+            self.segs[-1].call = True
+            self.i += 1
+        else:
+            self.flush()
+            self.i += 1
+            self.new_segment()
+        return True
+
+    def _try_lone_brace(self) -> bool:
+        text, i = self.text, self.i
+        if text[i] in "{}" and not self.ps and not self.has and (i + 1 >= self.n or text[i + 1].isspace() or text[i + 1] == ";"):
+            self.i += 1  # a lone { or } is shell grouping, not an argument
+            return True
+        return False
+
+    def _try_variable(self) -> bool:
+        """`${...}` is taken whole. A bare `$` (or PowerShell `@`) only marks the word dynamic; the plain-character case appends it."""
+        text, i = self.text, self.i
+        if not (text[i] == "$" or (self.ps and text[i] == "@")):
+            return False
+        self.dyn = self.has = True
+        if not text.startswith("${", i):
+            return False
+        j = text.find("}", i)
+        j = self.n if j == -1 else j
+        self.word.append(text[i : j + 1])
+        self.i = j + 1
+        return True
+
+    _HANDLERS = ("_try_blank", "_try_newline", "_try_comment", "_try_single_quote", "_try_double_quote", "_try_escape", "_try_substitution",
+                 "_try_redirect", "_try_ps_paren", "_try_operator", "_try_lone_brace", "_try_variable")
+
+    def run(self) -> list[Segment]:
+        handlers = [getattr(self, h) for h in self._HANDLERS]
+        while self.i < self.n:
+            if any(h() for h in handlers):
                 continue
-        if c in "*?[" and not ps or (ps and c in "*?[" ):
-            state["glob"] = True
-        word.append(c)
-        state["has"] = True
-        i += 1
-    flush()
-    return [s for s in segs if s.words or s.redirects or s.heredoc]
+            c = self.text[self.i]
+            if c in "*?[":
+                self.glob = True
+            self.word.append(c)
+            self.has = True
+            self.i += 1
+        self.flush()
+        return [s for s in self.segs if s.words or s.redirects or s.heredoc]
+
+
+def tokenize(text: str, ps: bool = False) -> list[Segment]:
+    return _Lexer(text, ps).run()
 
 
 # ------------------------------------------------------------------ command tables
@@ -308,7 +368,7 @@ _WRAPPERS = {"sudo", "doas", "nohup", "time", "command", "builtin", "exec", "nic
 _SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "fish", "ash"}
 _PS_SHELLS = {"powershell", "pwsh"}
 _INTERPRETERS = _SHELLS | _PS_SHELLS | {"python", "python2", "python3", "py", "node", "nodejs", "deno", "bun", "perl", "ruby", "php", "lua", "iex", "invoke-expression", "source", ".", "eval", "cmd"}
-_DECODERS = {"base64", "xxd", "openssl", "gunzip", "zcat", "gzip", "unzip", "uudecode", "certutil"}
+_DECODERS = {"base64", "xxd", "openssl", "gunzip", "zcat", "gzip", "unzip", "uudecode", "certutil", "rev", "tr", "basenc"}
 _NET_FETCH = {"curl", "wget", "iwr", "irm", "invoke-webrequest", "invoke-restmethod", "fetch", "aria2c", "http", "https", "xh", "start-bitstransfer"}
 _NET_RAW = {"nc", "ncat", "netcat", "socat", "telnet", "ssh", "scp", "sftp", "ftp", "tftp", "rsync", "mosh", "test-netconnection", "tnc"}
 _NET_DNS = {"nslookup", "dig", "host", "ping", "resolve-dnsname", "tracert", "traceroute"}
@@ -330,11 +390,21 @@ _CODE_WRITE_VERBS = re.compile(
     r"open\([^)]*['\"][wax+]|\.write_text|\.write_bytes|os\.(remove|unlink|rename|replace|truncate)|shutil\.(copy|move|rmtree)|"
     r"writeFile|appendFile|rmSync|unlinkSync|renameSync|createWriteStream|IO\.File\]::(Write|Append|Delete|Copy|Move)|file_put_contents|File\.(write|delete)"
 )
-_URL = re.compile(r"""(?i)\b(?:[a-z][a-z0-9+.-]*)://(?:[^/\s'"@]*@)?(?P<host>\[[0-9a-f:]+\]|[^/\s:'"?#]+)""")
+_URL = re.compile(r"""(?i)\b(?:[a-z][a-z0-9+.-]*)://(?:[^/\s'"@]*@)?(?P<host>\[[0-9a-f:.]+\]|[^/\s:'"?#]+)""")
 _HOSTLIKE = re.compile(r"^(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}$|^\d{1,3}(?:\.\d{1,3}){3}$|^localhost$")
 _ENCODED_PS = re.compile(r"(?i)(^|\s)-e(nc|ncodedcommand)?\b")
 
 
+_SECRET_VAR = re.compile(r"(?i)(?:\$\{?(?:env:)?|%)\w*(?:token|secret|passw(?:or)?d|api_?key|private_?key|credential|access_?key)\w*")
+_DEV_TCP = re.compile(r"/dev/(?:tcp|udp)/([^/\s'\"]+)/")
+_SOURCE_OK = {"activate", "activate.sh", "activate.fish", "activate.ps1", "nvm.sh", "conda.sh"}  # sourcing these is routine
+_WIN_SWITCH = re.compile(r"^/(?:[A-Za-z?](?::\S*)?|grant|deny|remove|inheritance|reset|save|restore|setowner|findsid|verify|substitute)$", re.I)
+_WIN_CMDS = {"del", "erase", "rd", "rmdir", "xcopy", "robocopy", "attrib", "icacls", "cacls", "takeown"}
+_TEXT_ONLY = {"echo", "printf", "grep", "egrep", "fgrep", "rg", "ag", "awk", "sed", "cat", "head", "tail", "less", "more", "wc", "diff", "tr", "sort", "uniq", "cut",
+              "write-host", "write-output", "write-error", "select-string", "findstr", "ls", "dir", "type", "true", "false", "test", "[", "open", "xdg-open", "start", "man", "which", "where"}
+_CODE_FETCHERS = {"certutil", "bitsadmin", "mshta", "regsvr32", "rundll32", "msiexec", "cscript", "wscript", "msbuild", "installutil"}  # fetch or run remote code
+_PKG_SOURCE_FLAGS = {"--index-url", "-i", "--extra-index-url", "--trusted-host", "--registry", "--source", "--find-links", "--index", "--default-index", "--proxy", "--repository-url", "--git", "--registry-url"}
+_RUNNABLE = (".sh", ".bash", ".zsh", ".ps1", ".py", ".pl", ".rb", ".js", ".mjs", ".bat", ".cmd", ".php", ".vbs", ".exe", ".msi", ".run", ".bin")
 _SAFE_VARS = {"home", "userprofile", "temp", "tmp", "tmpdir", "appdata", "localappdata"}
 
 
@@ -351,6 +421,18 @@ def _unresolvable(text: str) -> bool:
 def _name(tok: Tok) -> str:
     base = tok.text.replace("\\", "/").rsplit("/", 1)[-1].lower()
     return base[:-4] if base.endswith(".exe") else base
+
+
+NET_COMMANDS = _NET_FETCH | _NET_RAW
+
+
+def urls_in(text: str) -> list[str]:
+    """Host names of every scheme://host URL in `text`."""
+    return [m.group("host").strip("[]").lower() for m in _URL.finditer(text)]
+
+
+def _basename(path: str) -> str:
+    return path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1].lower()
 
 
 def host_of(url_or_host: str) -> str | None:
@@ -373,6 +455,7 @@ class _Walker:
         self.ps = ps
         self.env = env
         self.last_args: list[Tok] = []
+        self.downloaded: set[str] = set()  # base names of files a fetch command saved, to catch "download, then run it"
 
     # -- helpers -----------------------------------------------------------
     def sub(self, tok: Tok) -> Tok:
@@ -415,6 +498,8 @@ class _Walker:
             hits = globlib.glob(text if os.path.isabs(text) else os.path.join(self.cwd, text))
             if not hits:
                 self.a.words.append(text)
+                if kind in ("write", "delete"):  # nothing matches HERE, but the pattern's folder still says where it would act
+                    self.a.ops.append(ShellOp(kind, text, self.cwd, via, upload, recursive))
                 return
             for h in hits[:50]:
                 self.a.ops.append(ShellOp(kind, h, self.cwd, via, upload, recursive))
@@ -432,25 +517,28 @@ class _Walker:
             text = text.lstrip("@")
             if len(self.a.words) < MAX_WORDS and text and not t.dyn:
                 self.a.words.append(text)
+            if t.dyn and _SECRET_VAR.search(t.text):
+                self.a.mentions.append("secret-var:" + t.text[:40])
 
     # -- main loop -----------------------------------------------------------
     def walk(self, text: str) -> None:
         segs = tokenize(text, self.ps)
-        prev: Segment | None = None
         chain: list[tuple[Segment, str]] = []
         for seg in segs:
             if not seg.piped_from_prev:
                 chain = []
             cmd = self.segment(seg)
             chain.append((seg, cmd))
+            if self.downloaded and (cmd in self.downloaded or (cmd in _INTERPRETERS and any(_basename(w.text) in self.downloaded for w in self.last_args if not w.text.startswith("-")))):
+                self.a.pipe_exec.append("a file downloaded earlier in this command is executed")
             if seg.piped_from_prev and cmd in _INTERPRETERS | {"iex", "invoke-expression"} and not self._has_script(self.last_args, cmd):
                 up = [c for _, c in chain[:-1]]
                 if any(c in _NET_FETCH for c in up):
                     self.a.pipe_exec.append(f"downloaded text is piped into {cmd}")
                 elif any(c in _DECODERS for c in up) or any(c == "echo" or c == "printf" for c in up) and any(c in _DECODERS for c in up):
                     self.a.pipe_exec.append(f"decoded text is piped into {cmd}")
-            prev = seg
-        _ = prev
+                elif any(c in ("echo", "printf") and any(re.search(r"\\x[0-9a-fA-F]{2}|\\[0-7]{3}|\\u[0-9a-fA-F]{4}", w.text) for w in s.words) for s, c in chain[:-1]):
+                    self.a.pipe_exec.append(f"escape-encoded text is piped into {cmd}")
 
     def _has_script(self, args: list[Tok], cmd: str) -> bool:
         """A shell reading stdin has no file argument; `bash script.sh` is not a pipe-exec."""
@@ -467,6 +555,17 @@ class _Walker:
         if self.ps and words and re.match(r"^\$(env:)?\w+$", words[0].text) and len(words) >= 3 and words[1].text == "=":
             self._assign(words[0].text.lstrip("$").removeprefix("env:"), Tok(" ".join(w.text for w in words[2:]), any(w.dyn for w in words[2:])))
             words = []  # the whole segment was an assignment
+        elif self.ps and len(words) == 1 and (m := re.match(r"^\$(?:env:)?(\w+)[-+*/]?=(.*)$", words[0].text)):
+            self._assign(m.group(1), Tok(m.group(2), words[0].dyn and "$" in m.group(2)))
+            words = []  # `$ErrorActionPreference='Stop'` written without spaces
+        if self.ps and words and not seg.call and words[0].dyn and words[0].text[:1] in "$[" and not words[0].text.startswith("$("):
+            # a PowerShell expression statement (`$env:PATH -split ';'`, `[IO.File]::ReadAllText(..)`), not a command to run
+            self.scan_code(" ".join(w.text for w in words), "PowerShell expression")
+            words = []
+        for tok in [r[1] for r in seg.redirects] + seg.words:
+            m = _DEV_TCP.search(tok.text)
+            if m:
+                self.a.ops.append(ShellOp("net", m.group(1).lower(), self.cwd, "/dev/tcp", upload=True))
         for op, tok in seg.redirects:
             if op in (">", ">>", ">|", "&>", "&>>"):
                 self.target(tok, "write", f"redirect {op}")
@@ -549,8 +648,12 @@ class _Walker:
 
     # -- the command table -----------------------------------------------------
     def dispatch(self, cmd: str, args: list[Tok], seg: Segment) -> None:  # noqa: C901 - a table, readable as one
+        if cmd in _WIN_CMDS or (cmd in ("copy", "move", "ren") and self.ps is False):
+            # cmd.exe switches (/q /s /E /grant) are not paths; keep them as flags so they do not become targets
+            args = [Tok("-" + a.text[1:], a.dyn, a.glob, a.quoted) if _WIN_SWITCH.match(a.text) else a for a in args]
         pos = [a for a in args if not a.text.startswith("-") or a.text == "-"]
         flags = [a.text for a in args if a.text.startswith("-")]
+        win_rec = cmd in _WIN_CMDS and any(f.lower() in ("-s", "-t", "-r") for f in flags)  # /S /T /R switches
 
         if cmd in ("cd", "pushd", "set-location", "sl", "chdir"):
             t = pos[0] if pos else None
@@ -579,7 +682,8 @@ class _Walker:
             return
         if cmd in ("source", ".") and pos:
             self.target(pos[0], "read", cmd)
-            self.a.opaque.append("sourced file is not analysed")
+            if _name(Tok(self.sub(pos[0]).text.replace("\\", "/"))) not in _SOURCE_OK and not self.sub(pos[0]).text.replace("\\", "/").endswith(tuple("/" + n for n in _SOURCE_OK)):
+                self.a.opaque.append("sourced file is not analysed")
             return
         if cmd in ("tee", "tee-object"):
             for t in pos:
@@ -590,7 +694,7 @@ class _Walker:
             return
         if cmd in _RM:
             for t in pos:
-                self.target(t, "delete", cmd, recursive=any(f in ("-r", "-R", "-rf", "-fr", "-recurse", "--recursive", "/s", "-Recurse") for f in flags) or cmd in ("rmdir", "rd"))
+                self.target(t, "delete", cmd, recursive=win_rec or any(f in ("-r", "-R", "-rf", "-fr", "-recurse", "--recursive", "/s", "-Recurse") for f in flags) or cmd in ("rmdir", "rd"))
             if self.ps:
                 self._ps_named(args, "delete", cmd)
             return
@@ -612,9 +716,11 @@ class _Walker:
                     self.target(t, "write", f"{cmd} -i")
             self._inline(cmd, args)
             return
-        if cmd in ("truncate", "touch", "chmod", "chown", "chgrp", "chattr", "setfacl", "icacls", "attrib", "set-acl", "mkdir", "shred", "fallocate"):
+        if cmd in ("truncate", "touch", "chmod", "chown", "chgrp", "chattr", "setfacl", "icacls", "takeown", "attrib", "set-acl", "mkdir", "shred", "fallocate"):
             skip = 1 if cmd in ("chmod", "chown", "chgrp", "chattr") and pos else 0
-            rec = any(f in ("-R", "-r", "--recursive", "/s", "/t", "-Recurse") or (f.startswith("-") and not f.startswith("--") and "R" in f[1:]) for f in flags)
+            rec = win_rec or any(f in ("-R", "-r", "--recursive", "/s", "/t", "-Recurse") or (f.startswith("-") and not f.startswith("--") and "R" in f[1:]) for f in flags)
+            if cmd == "chmod" and pos and re.search(r"^[0-7]?[2-7][0-7]{3}$|^[ugoa]*[+=][rwxXt]*s", self.sub(pos[0]).text):
+                self.a.system.append("chmod sets the setuid/setgid bit")
             for t in pos[skip:]:
                 self.target(t, "write", cmd, recursive=rec)
             return
@@ -622,6 +728,10 @@ class _Walker:
             for a in args:
                 if a.text.startswith("of="):
                     self.target(Tok(a.text[3:], a.dyn, a.glob, a.quoted), "write", "dd")
+                    if re.match(r"^/dev/(sd|hd|vd|xvd|nvme|mmcblk|disk|rdisk)", a.text[3:]):
+                        self.a.system.append("dd writes to a raw disk device")
+            return
+        if self._system(cmd, args, pos, flags):
             return
         if cmd == "git":
             self._git(args, pos)
@@ -637,9 +747,12 @@ class _Walker:
             return
         if cmd in _NET_DNS:
             for t in pos:
-                h = host_of(self.sub(t).text)
+                text = self.sub(t).text
+                h = host_of(text)
                 if h:
                     self.a.ops.append(ShellOp("net", h, self.cwd, cmd))
+                elif t.dyn and (m := re.search(r"[)`}]\.((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,})$", text)):
+                    self.a.ops.append(ShellOp("net", m.group(1).lower(), self.cwd, cmd, upload=True))  # data in the name: DNS exfiltration
             return
         if self._persistence(cmd, args, flags):
             return
@@ -649,12 +762,7 @@ class _Walker:
             self._container(args)
             return
         if cmd in _PKG:
-            for t in args:
-                text = self.sub(t).text
-                if "://" in text:
-                    h = host_of(text.split("=", 1)[1] if text.startswith("-") and "=" in text else text.removeprefix("git+"))
-                    if h:
-                        self.a.ops.append(ShellOp("net", h, self.cwd, cmd, supply=True))
+            self._package_sources(cmd, args)
             return
         if cmd in _PS_WRITE_FIRST:
             self._ps_write(cmd, args)
@@ -673,6 +781,58 @@ class _Walker:
             return
         if cmd == "gh" or cmd == "git-lfs":
             return
+        if cmd not in _TEXT_ONLY:
+            # any other program given a URL: certutil, mshta, regsvr32 /i:http://..., a project CLI, ... (code-fetching tools count as a supply step)
+            for t in args:
+                text = self.sub(t).text
+                m = _URL.search(text)
+                if m:
+                    self.a.ops.append(ShellOp("net", m.group("host").strip("[]").lower(), self.cwd, cmd, supply=cmd in _CODE_FETCHERS))
+
+    def _package_sources(self, cmd: str, args: list[Tok]) -> None:
+        """Package managers: every URL, index/registry/proxy flag value and (for go) module path names a place code comes from."""
+        texts = [self.sub(t).text for t in args]
+        sub = next((t for t in texts if not t.startswith("-")), "")
+        for i, text in enumerate(texts):
+            val = None
+            if "://" in text:
+                val = text.split("=", 1)[1] if text.startswith("-") and "=" in text else text.removeprefix("git+")
+            elif text.split("=", 1)[0] in _PKG_SOURCE_FLAGS:
+                val = text.split("=", 1)[1] if "=" in text else (texts[i + 1] if i + 1 < len(texts) else None)
+            elif cmd == "go" and sub in ("get", "install", "run") and re.match(r"^[a-z0-9-]+(\.[a-z0-9-]+)+/", text):
+                val = text
+            if val:
+                h = host_of(val if "://" in val else "https://" + val)
+                if h:
+                    self.a.ops.append(ShellOp("net", h, self.cwd, cmd, supply=True))
+
+    def _system(self, cmd: str, args: list[Tok], pos: list[Tok], flags: list[str]) -> bool:
+        """Commands that wipe disks, clear logs or history, stop the machine, or hand out capabilities."""
+        words = " ".join(self.sub(a).text.lower() for a in args)
+        why = ""
+        disk = (cmd.startswith("mkfs") or cmd in ("wipefs", "diskpart", "format-volume", "clear-disk", "initialize-disk")
+                or (cmd in ("fdisk", "sfdisk", "parted") and "-l" not in flags) or (cmd == "cipher" and ("/w" in words or "-w" in words))
+                or (cmd == "vssadmin" and "delete" in words) or (cmd == "diskutil" and re.search(r"erase|partition", words)))
+        if disk:
+            why = f"{cmd} can wipe or repartition a disk"
+        elif cmd == "format" and any(re.fullmatch(r"[a-z]:", self.sub(t).text.lower()) for t in pos):
+            why = "format erases a drive"
+        elif cmd in ("shutdown", "reboot", "halt", "poweroff", "stop-computer", "restart-computer") and not (cmd == "shutdown" and "-c" in flags):
+            why = f"{cmd} stops or restarts the machine"
+        elif cmd == "kill" and re.search(r"(^|\s)-1(\s|$)", words):
+            why = "kill -1 signals every process"
+        elif cmd == "history" and ("-c" in flags or "-w" in flags):
+            why = "shell history is cleared"
+        elif cmd in ("clear-eventlog", "remove-eventlog", "clear-history") or (cmd == "wevtutil" and re.search(r"\b(cl|clear-log)\b", words)) or (cmd == "auditpol" and "clear" in words):
+            why = "event logs or history are cleared"
+        elif cmd == "setcap" and "cap_" in words:
+            why = "setcap grants file capabilities"
+        elif cmd in ("pip", "pip3", "pipx", "uv", "npm", "claude") and re.search(r"\b(uninstall|remove|disable)\b[^\n;|&]*jev", words):
+            why = "uninstalls or disables a jev tool (the monitor itself)"
+        else:
+            return False
+        self.a.system.append(why)
+        return True
 
     # -- command families -----------------------------------------------------
     def _persistence(self, cmd: str, args: list[Tok], flags: list[str]) -> bool:
@@ -698,7 +858,7 @@ class _Walker:
             self.a.persist.append("launchctl loads a launch agent/daemon")
         elif cmd in ("at", "batch") and args:
             self.a.persist.append("at schedules a job")
-        elif cmd == "wmic" and re.search(r"\b(process call create|startup)\b", words):
+        elif cmd == "wmic" and re.search(r"\b(process call create|startup|__eventfilter|__eventconsumer|__filtertoconsumerbinding|subscription|call create)\b", words):
             self.a.persist.append("wmic starts a process or edits startup entries")
         else:
             return False
@@ -915,6 +1075,8 @@ class _Walker:
                 cwd = _join(cwd, self.sub(a[1]).text) if cwd else ""
                 a = a[2:]
             elif a[0].text in ("-c", "--exec-path") and len(a) > 1:
+                if a[0].text == "-c":
+                    self._git_config_pair(self.sub(a[1]).text)
                 a = a[2:]
             else:
                 a = a[1:]
@@ -960,18 +1122,23 @@ class _Walker:
                     h = host_of(self.sub(t).text) if ("://" in t.text or "@" in t.text) else None
                     if h:
                         self.a.ops.append(ShellOp("net", h, self.cwd, f"git {sub}", upload=sub == "push" or remote_target))
+            elif sub in ("init", "clone") and any(t.text.startswith("--template") for t in rest):
+                self.a.persist.append("git is given a template folder, which can install hooks that run later")
             elif sub in ("apply", "am"):
                 self._patch_targets([t for t in restpos])
             elif sub == "config":
-                if any(t.text in ("core.hooksPath", "core.hookspath") for t in rest):
-                    self.a.mentions.append("git-hooks-path")
-                joined = " ".join(self.sub(t).text for t in rest)
-                if re.search(r"(^|\s)!|core\.(sshcommand|pager|editor|fsmonitor)\b|diff\.external|credential\.helper\s+!", joined, re.I):
-                    self.a.persist.append("git config sets a command that git will run later")
-                if re.search(r"http\.sslverify\s*[ =]\s*false", joined, re.I):
-                    self.a.persist.append("git TLS verification is switched off")
+                self._git_config_pair(" ".join(self.sub(t).text for t in rest))
         finally:
             self.cwd = saved
+
+    def _git_config_pair(self, joined: str) -> None:
+        """`git config <key> <value>` or `git -c key=value`: keys that make git run a program or switch off checks."""
+        if re.search(r"core\.hookspath", joined, re.I):
+            self.a.mentions.append("git-hooks-path")
+        if re.search(r"(^|\s)!|core\.(sshcommand|pager|editor|fsmonitor|askpass)\b|diff\.external|credential\.helper[\s=]+!|protocol\.ext\.allow", joined, re.I):
+            self.a.persist.append("git config sets a command that git will run later")
+        if re.search(r"http\.sslverify\s*[ =]\s*false", joined, re.I):
+            self.a.persist.append("git TLS verification is switched off")
 
     def _patch_targets(self, files: list[Tok]) -> None:
         """`git apply x.patch`: read the patch (if it exists and is small) and treat its target files as written."""
@@ -1020,6 +1187,12 @@ class _Walker:
                 self.a.words.append(lit)
         if re.search(r"\b(?:exec|eval|compile)\s*\(|__import__\(|base64\.b64decode|subprocess|os\.system|child_process", code):
             self.a.mentions.append("inline-code-exec")
+        if re.search(r"(?:\bexec|\beval|\bFunction)\b\s*\(?.{0,120}?(?:b64decode|atob|fromhex|unhexlify|decompress|decode_base64|from_base64|base64_decode|FromBase64|Buffer\.from)", code, re.S):
+            self.a.pipe_exec.append(f"{via} inline code executes decoded text")
+        if re.search(r"\b(?:system|popen|exec|execSync|spawn|spawnSync|shell_exec|passthru|run|call|check_output|Popen)\s*\(|child_process", code):
+            for lit in re.findall(r"""['"]([^'"\n]{6,300})['"]""", code)[:6]:
+                if " " in lit and "://" not in lit.split(" ")[0]:
+                    self.recurse(lit, False)  # a string handed to the system shell: analyse it as a command line
         self.a.mentions.append(code)
 
     def _fetch(self, cmd: str, args: list[Tok]) -> None:
@@ -1041,7 +1214,8 @@ class _Walker:
                 outs.append(Tok(t.split("=", 1)[1]))
             if low in ("-p", "--directory-prefix") and cmd == "wget" and i + 1 < len(args):
                 outs.append(args[i + 1])
-            if not t.startswith("-") and (("://" in t) or _HOSTLIKE.match(t.split("/")[0]) or t.startswith("localhost")):
+            is_output_value = i > 0 and (args[i - 1].text.lower() in ("-o", "--output", "-outfile", "-destination", "-p", "--directory-prefix", "-d", "--data", "--data-binary", "-t", "--upload-file", "-x", "--request", "-h", "--header", "-u", "--user", "-a", "--user-agent", "-e", "--referer", "-b", "--cookie", "-method", "-headers", "-body", "-infile", "-useragent", "-contenttype") or args[i - 1].text == "-O")
+            if not t.startswith("-") and not is_output_value and (("://" in t) or _HOSTLIKE.match(t.split("/")[0]) or t.startswith("localhost")):
                 urls.append(args[i])
             i += 1
         for u in urls:
@@ -1055,8 +1229,14 @@ class _Walker:
             self.a.opaque.append(f"{cmd} URL depends on an expansion")
         for o in outs:
             self.target(o, "write", cmd)
+            name = _basename(self.sub(o).text)
+            if name.endswith(_RUNNABLE):
+                self.downloaded.add(name)
 
     def _raw_net(self, cmd: str, args: list[Tok], pos: list[Tok]) -> None:
+        if cmd in ("ssh", "scp", "sftp", "mosh", "rsync"):  # option values (-o StrictHostKeyChecking=no, -i key, -p 22) are not hosts
+            skip = {i + 1 for i, a in enumerate(args) if a.text in ("-o", "-i", "-p", "-P", "-l", "-F", "-J", "-b", "-c", "-E", "-e", "-m", "-S", "-W", "-B", "-D", "-L", "-R", "-w")}
+            pos = [a for i, a in enumerate(args) if i not in skip and (not a.text.startswith("-") or a.text == "-")]
         hosts = []
         for t in pos:
             h = host_of(self.sub(t).text)

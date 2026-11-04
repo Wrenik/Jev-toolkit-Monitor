@@ -237,7 +237,7 @@ def main(argv: list[str]) -> int:
     sb = Sandbox()
     try:
         out: dict[str, Any] = {}
-        for name in ("tune", "heldout", "heldout2"):
+        for name in ("tune", "heldout", "heldout2", "heldout3", "heldout4"):
             if which in (name, "all") and (EVAL_DIR / f"{name}.toml").exists():
                 out[name] = summarise([run_scenario(sc, sb, policy, judge) for sc in load_set(name)])
         if day_n:

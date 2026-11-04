@@ -26,6 +26,7 @@ FOLD_CASE = IS_WINDOWS or sys.platform == "darwin"
 _VAR = re.compile(r"\$env:([A-Za-z_][A-Za-z0-9_]*)|\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?|%([A-Za-z_][A-Za-z0-9_]*)%", re.I)
 _SHORT83 = re.compile(r"(^|/)[^/]{1,6}~\d+(\.[^/]{0,3})?(?=/|$)")
 _GITBASH = re.compile(r"^/([a-zA-Z])(/|$)")
+MAX_PATH_CHARS = 4096
 _HOME_VARS = {"home": "HOME", "userprofile": "USERPROFILE"}
 
 
@@ -81,6 +82,8 @@ def _long_name(path: str) -> str:
 def canon(raw: str, cwd: str, env: dict[str, str] | None = None, win: bool | None = None, resolve: bool = True) -> Canon:
     """Normalise `raw` as seen from `cwd`. `win` forces Windows or POSIX rules (tests)."""
     win = IS_WINDOWS if win is None else win
+    if len(raw) > MAX_PATH_CHARS:
+        return Canon(raw[:80], True, "path is absurdly long")
     env = env if env is not None else dict(os.environ)
     text, unknown = _expand(raw.strip().strip("\"'"), env, win)
     if unknown:

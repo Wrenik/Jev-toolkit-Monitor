@@ -15,7 +15,7 @@ import time
 from functools import lru_cache
 from collections import defaultdict, deque
 
-from . import paths
+from . import catalog, paths
 from .policy import SECRET_EXEMPT_GLOBS, Policy
 from .shell import NET_COMMANDS, Analysis, analyze, host_of, urls_in
 from .types import CRITICAL, HIGH, LOW, MEDIUM, Call, Finding, tool_class
@@ -41,7 +41,15 @@ _LOG_FILES = ["**/.bash_history", "**/.zsh_history", "**/.history", "**/ConsoleH
 _PKG_CONF = {".npmrc", ".yarnrc", ".yarnrc.yml", ".pnpmrc", "pip.conf", "pip.ini", ".pypirc", ".condarc", "nuget.config", "settings.xml", "uv.toml", ".bunfig.toml", "bunfig.toml", ".gemrc"}
 _METADATA_WORD = re.compile(r"(?i)169\.254\.\d{1,3}\.\d{1,3}|fd00:ec2::254|metadata\.google\.internal|100\.100\.100\.200")
 _ENV_DUMP = {"env", "printenv", "get-childitem", "gci", "dir", "ls"}
-_METADATA = {"169.254.169.254", "169.254.170.2", "fd00:ec2::254", "metadata.google.internal", "metadata", "100.100.100.200", "metadata.azure.com"}
+_METADATA = {"169.254.169.254", "169.254.170.2", "fd00:ec2::254", "metadata.google.internal", "metadata", "100.100.100.200", "metadata.azure.com",
+             "instance-data", "instance-data.ec2.internal", "metadata.tencentyun.com", "metadata.platformequinix.com", "metadata.packet.net"}
+_EMBEDDED_IP = re.compile(r"(?<![\d])(\d{1,3})[.-](\d{1,3})[.-](\d{1,3})[.-](\d{1,3})(?![\d])")  # 169.254.169.254.nip.io, 10-0-0-5.sslip.io
+# MCP tool inputs: which keys hold paths, commands and URLs, and which tool-name words mean write / delete
+_MCP_PATH_KEYS = {"path", "paths", "file", "files", "file_path", "filepath", "filename", "source", "src", "destination", "dest", "dst", "target", "directory", "dir", "folder", "from", "to", "notebook_path"}
+_MCP_CMD_KEYS = {"command", "cmd", "script", "shell", "commandline", "command_line"}
+_MCP_URL_KEYS = {"url", "urls", "uri", "endpoint", "href", "link", "base_url", "webhook", "webhook_url"}
+_MCP_WRITE = re.compile(r"(?i)write|create|edit|update|append|save|put|upload|replace|patch|insert|set|touch|mkdir|copy|move|rename|apply|commit")
+_MCP_DELETE = re.compile(r"(?i)delete|remove|rm|unlink|trash|drop|erase|clear|purge")
 
 
 _INTERNAL_NETS = [ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7")]
@@ -133,11 +141,56 @@ def _ops_of(call: Call, a: Analysis | None) -> list[tuple[str, str, str, str, bo
         p = inp.get("path")
         if isinstance(p, str):
             ops.append(("read", p, call.cwd, call.tool, True))
+    elif tool_class(call.tool) == "mcp":
+        ops.extend(_mcp_ops(call))
     if a is not None:
         for o in a.ops:
             if o.kind in ("write", "delete", "read"):
                 ops.append((o.kind, o.target, o.cwd, o.via, o.recursive))
     return ops
+
+
+def _looks_like_path(v: str) -> bool:
+    return 0 < len(v) < 1000 and ("/" in v or "\\" in v or v.startswith("~") or re.match(r"^[A-Za-z]:", v) is not None or re.search(r"\.\w{1,6}$", v) is not None)
+
+
+def _mcp_ops(call: Call) -> list[tuple[str, str, str, str, bool]]:
+    """File operations an MCP tool (or any tool the monitor does not know) seems to perform, judged by its name and its argument keys."""
+    verb = call.tool.split("__")[-1]
+    kind = "delete" if _MCP_DELETE.search(verb) else "write" if _MCP_WRITE.search(verb) else "read"
+    ops: list[tuple[str, str, str, str, bool]] = []
+    for key, val in call.input.items():
+        k = key.lower()
+        if k not in _MCP_PATH_KEYS:
+            continue
+        vals = val if isinstance(val, list) else [val]
+        for v in vals[:20]:
+            if isinstance(v, str) and _looks_like_path(v):
+                this = "read" if k in ("source", "src", "from") and re.search(r"(?i)copy", verb) else "delete" if k in ("source", "src", "from") and re.search(r"(?i)move|rename", verb) else kind
+                ops.append((this, v, call.cwd, call.tool, False))
+    return ops
+
+
+def _strings(obj, depth: int = 0):
+    """Every string inside a tool input (values only), shallow-limited."""
+    if isinstance(obj, str):
+        yield obj
+    elif depth < 4 and isinstance(obj, dict):
+        for v in list(obj.values())[:50]:
+            yield from _strings(v, depth + 1)
+    elif depth < 4 and isinstance(obj, list):
+        for v in obj[:50]:
+            yield from _strings(v, depth + 1)
+
+
+def _mcp_urls(call: Call) -> list[str]:
+    out: list[str] = []
+    for key, val in call.input.items():
+        if key.lower() in _MCP_URL_KEYS:
+            for v in (val if isinstance(val, list) else [val])[:10]:
+                if isinstance(v, str) and v:
+                    out.append(v)
+    return out
 
 
 def _written_bytes(call: Call) -> int:
@@ -158,6 +211,10 @@ def analyse_call(call: Call) -> Analysis | None:
         cmd = call.input.get("command")
         if isinstance(cmd, str):
             return analyze(cmd, call.cwd, powershell=call.tool == "PowerShell")
+    elif tool_class(call.tool) == "mcp":  # an MCP tool that takes a command line is a shell by another name
+        cmds = [v for k, v in call.input.items() if k.lower() in _MCP_CMD_KEYS and isinstance(v, str)]
+        if cmds:
+            return analyze("\n".join(cmds), call.cwd, powershell=False)
     return None
 
 
@@ -177,6 +234,7 @@ class _Checker:
         self.secret_touch = False
         self.hosts: list[str] = []
         self.net_present = False
+        self.published = False
         self._blob: str | None = None
 
     # -- helpers
@@ -201,7 +259,7 @@ class _Checker:
             self.findings.append(Finding("opaque-shell", HIGH, "the shell command is missing or not text, so it cannot be checked", opaque=True))
         elif tool_class(call.tool) == "other":
             self.findings.append(Finding("unknown-tool", LOW, f"tool {call.tool[:40]!r} is not one the monitor knows (logged, not judged)"))
-        for section in (self._opaque, self._file_ops, self._shell_words, self._canary_tokens, self._monitor_tamper, self._outbound, self._shell_shapes):
+        for section in (self._opaque, self._file_ops, self._shell_words, self._canary_tokens, self._monitor_tamper, self._outbound, self._shell_shapes, self._content_checks, self._combos):
             section()
         self.findings.extend(self.tracker.record(call.session, _written_bytes(call), self.hosts, self.policy, self.now))
         return self.findings
@@ -226,6 +284,7 @@ class _Checker:
             elif kind in ("write", "delete"):
                 self._write_op(kind, raw, p, via, recursive, label)
             elif kind == "read" and _is_secret(p, self.policy):
+                self.secret_touch = True
                 self.once(Finding("secret-file-access", MEDIUM, f"{via} reads a likely secret file ({label})"), p)
 
     def _write_op(self, kind: str, raw: str, p: str, via: str, recursive: bool, label: str) -> None:
@@ -257,6 +316,10 @@ class _Checker:
             once(Finding("write-outside-scope", sev, f"{via} {kind}s outside the project ({label})", "Add the folder to [scope] extra_write_dirs."), p)
         if via in ("chmod", "chown", "chgrp") and recursive and not paths.under(p, root):
             once(Finding("destructive-permission-change", HIGH, f"{via} -R changes permissions or owners outside the project ({label})"), p)
+        if kind == "write" and catalog.CI_FILES.search(p):
+            text = "\n".join(_strings({k: v for k, v in self.call.input.items() if k != "file_path"}))
+            if catalog.CI_RISK.search(text):
+                once(Finding("ci-pipeline-risk", MEDIUM, f"{via} writes a CI pipeline file ({label}) with a risky construct (remote script, secrets sent out, pull_request_target)"), p)
         if kind == "write" and (os.path.basename(p) in _PKG_CONF or p.endswith("/.cargo/config.toml")):
             for h in urls_in(self.blob):
                 if not host_allowed(h, policy) and ip_kind(h) != "loopback":
@@ -279,6 +342,15 @@ class _Checker:
             elif _is_secret(c.path, self.policy):
                 self.secret_touch = True
                 self.once(Finding("secret-file-access", MEDIUM, f"command touches a likely secret file ({w[:60]})"), c.path)
+        for why in a.cred:
+            self.secret_touch = True
+            self.once(Finding("credential-store-read", MEDIUM, why), why)
+        if a.archives or a.publish:  # copying or publishing a whole secret folder (`cp -r ~/.ssh`, `rclone copy ~/.aws`)
+            for w in a.words[:150]:
+                if re.search(r"[/\.~]", w):
+                    c = self.classify(w, self.call.cwd)
+                    if not c.ambiguous and (_is_secret(c.path + "/x", self.policy) or _is_secret(c.path, self.policy)):
+                        self.secret_touch = True
         if any(cmd in ("printenv", "env-dump") for cmd in a.commands) or any(m.startswith("secret-var:") for m in a.mentions):
             self.secret_touch = True
 
@@ -301,6 +373,10 @@ class _Checker:
             if base in _METADATA or ip_kind(base) != "none":
                 h = base
         kind, once = ip_kind(h), self.once
+        if kind == "none" and (m := _EMBEDDED_IP.search(h)):  # a name that resolves to an address it spells out (nip.io, sslip.io, ...)
+            emb = ".".join(m.groups())
+            if ip_kind(emb) in ("link-local", "private", "loopback") or emb in _METADATA:
+                h, kind = emb, ip_kind(emb)
         if h in _METADATA or kind == "link-local":
             once(Finding("ssrf-metadata", HIGH, f"{via} reaches a cloud metadata / link-local address ({h}), the usual way to steal cloud credentials"), h)
             return True
@@ -325,11 +401,22 @@ class _Checker:
             h = host_of(url if "://" in url else "http://" + url)
             if h:
                 self.hosts.append(h)
-                self._net_finding(h, "WebFetch", False, False)
+                if self._net_finding(h, "WebFetch", False, False):
+                    self.net_present = True
             else:
                 once(Finding("outbound-unlisted-host", MEDIUM, "WebFetch URL could not be parsed"), url)
+        if tool_class(call.tool) == "mcp":
+            for url in _mcp_urls(call):
+                h = host_of(url if "://" in url else "http://" + url)
+                if h:
+                    self.hosts.append(h)
+                    if self._net_finding(h, call.tool.split("__")[-1], False, False):
+                        self.net_present = True
         if a is None:
             return
+        if a.publish:  # a publishing command is a way out even to a trusted host
+            self.net_present = True
+            self.published = True
         for o in a.ops:
             if o.kind == "listen":
                 once(Finding("opens-listener", HIGH, f"{o.via} opens a listening socket"), o.via)
@@ -363,8 +450,56 @@ class _Checker:
             once(Finding("instruction-file-change", HIGH, "git config core.hooksPath redirects git hooks"), "hooks")
         for why in a.bulk:
             once(Finding("bulk-change", LOW, f"{why} can rewrite many files"), why)
+        for rule, why in a.high:
+            once(Finding(rule, HIGH, why), why)
+        for rule, why in a.medium:
+            once(Finding(rule, MEDIUM, why), why)
+        for m in a.mentions:
+            if m.startswith("redirect-var:"):
+                key, _, val = m[len("redirect-var:"):].partition("=")
+                h = host_of(val if "://" in val else "http://" + val.strip("'\""))
+                if h and not host_allowed(h, self.policy) and ip_kind(h) != "loopback":
+                    once(Finding("traffic-redirect", MEDIUM, f"{key} sends this client's or the shell's traffic to unlisted host {h}", "Add the host to [network] allow_hosts."), key)
         if any(c in ("sudo", "doas") for c in a.commands):
             once(Finding("privilege-escalation", MEDIUM, "command uses sudo"), "sudo")
+
+    def _content_checks(self) -> None:
+        """Text the agent writes or sends: invisible characters, a sub-agent briefed to do something unsafe."""
+        call, once = self.call, self.once
+        for text in _strings(call.input):
+            if len(text) > 4 and (m := catalog.HIDDEN_CHARS.search(text.lstrip("﻿"))):
+                once(Finding("hidden-unicode", MEDIUM, f"the call contains invisible or bidirectional control characters (U+{ord(m.group(0)):04X}), used to hide instructions or code"), "hidden")
+                break
+        if tool_class(call.tool) == "agent":
+            text = "\n".join(_strings(call.input))
+            m = catalog.SUBAGENT_RISK.search(text)
+            if m or catalog.SECRET_LITERAL.search(text):
+                once(Finding("subagent-risky-prompt", MEDIUM, f"the brief for a sub-agent asks for something the monitor would hold if the agent did it itself ({(m.group(0) if m else 'a secret')[:50]!r})"), "agent")
+
+    def _combos(self) -> None:
+        """Findings that need facts from several sections: secrets leaving through a literal, a harvest, a sweep."""
+        a, once = self.a, self.once
+        blob = self.blob.replace(chr(92) * 2, chr(92))  # json doubled the backslashes of Windows paths
+        if self.net_present and (m := catalog.SECRET_LITERAL.search(blob)):
+            once(Finding("secret-literal-egress", HIGH, f"a secret-looking literal ({m.group(0)[:6]}...) appears in a call that reaches an unlisted host or publishes data"), "literal")
+        if a is None:
+            return
+        secret_text = bool(catalog.SECRET_TEXT.search(blob)) or self.secret_touch
+        if a.archives and secret_text:
+            stage = catalog.STAGE_TEXT.search(blob) or any(o.kind == "write" and not self._in_scope(o.target, o.cwd) for o in a.ops)
+            if stage:
+                once(Finding("secret-harvest", HIGH, "secret files or folders are copied or archived to a temp, download or outside location"), "harvest")
+        if a.sweeps and any(w in ("/", "~") or re.fullmatch(r"[A-Za-z]:[\/]?|/home|/Users|\$HOME", w) for w in a.words) and catalog.SECRET_PATTERN.search(blob):
+            heavy = a.archives or any(c in ("xargs", "nested") for c in a.commands) or any(o.kind == "write" for o in a.ops)
+            once(Finding("secret-sweep", HIGH if heavy else MEDIUM, "a search over the whole disk or home folder for key, token or credential files" + (", with the hits copied or saved" if heavy else "")), "sweep")
+
+    def _in_scope(self, target: str, cwd: str) -> bool:
+        c = self.classify(target, cwd)
+        return c.ambiguous or paths.under(c.path, self.root) or any(paths.under(c.path, t) for t in self.extras)
+
+
+def _split_checks_placeholder() -> None:  # pragma: no cover - keeps the diff readable
+    pass
 
 
 def check(call: Call, policy: Policy, tracker: Tracker, analysis: Analysis | None = None, now: float | None = None) -> list[Finding]:

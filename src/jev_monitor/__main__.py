@@ -148,7 +148,7 @@ def main(argv: list[str]) -> int:  # noqa: C901
     if cmd == "hook-snippet":
         # Printed, never written: you paste it into .claude/settings.json (project) or ~/.claude/settings.json (all projects).
         hook = {"type": "command", "command": f'"{sys.executable}" -m jev_monitor hook', "timeout": 10, "onFailure": "block"}
-        print(json.dumps({"hooks": {"PreToolUse": [{"matcher": "Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit|WebFetch", "hooks": [hook]}]}}, indent=2))
+        print(json.dumps({"hooks": {"PreToolUse": [{"matcher": "Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit|WebFetch|Agent|Task|mcp__.*", "hooks": [hook]}]}}, indent=2))
         return 0
     if cmd in ("-V", "--version", "version"):
         from importlib.metadata import PackageNotFoundError, version

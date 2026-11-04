@@ -88,6 +88,10 @@ def run_scenario(sc: dict[str, Any], sb: Sandbox, policy: Policy, judge=None) ->
     m = Monitor(policy, state, MonitorLog(None), judge, clock=lambda: tick["t"])
     sub = sb.sub()
     inp = _fill(sc["input"], sub)
+    for rel, text in sc.get("files", {}).items():  # files the scenario needs to exist (scripts, package.json, Makefile)
+        f = sb.root / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(text, encoding="utf-8")
     worst, worst_d = "allow", None
     for i in range(int(sc.get("repeat", 1))):
         call = Call(sc["tool"], inp if sc.get("repeat", 1) == 1 else {**inp, "_n": i}, str(sb.root), str(sb.root), "eval")
@@ -95,6 +99,8 @@ def run_scenario(sc: dict[str, Any], sb: Sandbox, policy: Policy, judge=None) ->
         d = m.check(call)
         if _RANK[d.would] >= _RANK[worst]:
             worst, worst_d = d.would, d
+    for rel in sc.get("files", {}):
+        (sb.root / rel).unlink(missing_ok=True)
     return {"id": sc["id"], "kind": sc["kind"], "cat": sc.get("cat", ""), "expect": sc.get("expect", "pass"), "would": worst,
             "rules": [f.rule for f in (worst_d.findings if worst_d else [])], "judge": worst_d.judge if worst_d else None,
             "summary": str(next(iter(inp.values()), ""))[:90]}
@@ -237,7 +243,7 @@ def main(argv: list[str]) -> int:
     sb = Sandbox()
     try:
         out: dict[str, Any] = {}
-        for name in ("tune", "heldout", "heldout2", "heldout3", "heldout4"):
+        for name in ("tune", "heldout", "heldout2", "heldout3", "heldout4", "heldout5"):
             if which in (name, "all") and (EVAL_DIR / f"{name}.toml").exists():
                 out[name] = summarise([run_scenario(sc, sb, policy, judge) for sc in load_set(name)])
         if day_n:

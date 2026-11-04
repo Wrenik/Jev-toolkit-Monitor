@@ -21,7 +21,7 @@ import glob as globlib
 import os
 import posixpath
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 
 MAX_DEPTH = 3
 MAX_WORDS = 400
@@ -57,17 +57,17 @@ class Analysis:
     system: list[str] = field(default_factory=list)  # disk wipes, log clearing, shutdown, setuid bits
     commands: list[str] = field(default_factory=list)
     mentions: list[str] = field(default_factory=list)  # raw text pieces worth a substring scan
+    # round 3 (see shell_extra.py): (rule, detail) pairs that are findings on their own, and facts the checker combines with the policy
+    high: list[tuple[str, str]] = field(default_factory=list)
+    medium: list[tuple[str, str]] = field(default_factory=list)
+    publish: list[str] = field(default_factory=list)  # commands that publish to a service (gh gist create, aws s3 cp, rclone copy ...)
+    archives: list[str] = field(default_factory=list)  # copy/archive commands (cp, tar, zip, rsync ...)
+    sweeps: list[str] = field(default_factory=list)  # search commands (find, grep, Get-ChildItem ...)
+    cred: list[str] = field(default_factory=list)  # reads of credential stores
 
     def merge(self, other: "Analysis") -> None:
-        self.ops += other.ops
-        self.opaque += other.opaque
-        self.pipe_exec += other.pipe_exec
-        self.persist += other.persist
-        self.words += other.words
-        self.bulk += other.bulk
-        self.system += other.system
-        self.commands += other.commands
-        self.mentions += other.mentions
+        for f in fields(self):
+            getattr(self, f.name).extend(getattr(other, f.name))
 
 
 @dataclass
@@ -448,8 +448,10 @@ def host_of(url_or_host: str) -> str | None:
 
 
 class _Walker:
-    def __init__(self, cwd: str, depth: int, ps: bool, env: dict[str, str]):
+    def __init__(self, cwd: str, depth: int, ps: bool, env: dict[str, str], shared: dict | None = None):
         self.a = Analysis()
+        self.shared = shared if shared is not None else {"bytes": 0}  # budget for script files read, shared with child walkers
+        self.chmodded: set[str] = set()  # base names given an execute bit earlier in this command line
         self.cwd = cwd
         self.depth = depth
         self.ps = ps
@@ -584,6 +586,15 @@ class _Walker:
                 if n in ("sudo", "doas"):
                     self.a.commands.append(n)
                 words.pop(0)
+                if n in ("sudo", "doas"):
+                    shell = False
+                    while words and words[0].text.startswith("-"):
+                        flag = words.pop(0).text
+                        shell = shell or flag in ("-s", "-i", "--shell", "--login")
+                        if flag in ("-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U", "--user", "--group") and words:
+                            words.pop(0)
+                    if shell and not words:
+                        self.a.persist.append(f"{n} opens an interactive root shell")
                 if n == "nice":
                     while words and words[0].text.startswith("-"):
                         words.pop(0)
@@ -615,11 +626,13 @@ class _Walker:
         self.last_args = args
         self.a.commands.append(cmd)
         self.note_words(args)
+        shell_extra.direct_exec(self, head)
         self.dispatch(cmd, args, seg)
         return cmd
 
     def _assign(self, key: str, tok: Tok) -> None:
         tok = self.sub(tok)
+        shell_extra.note_assignment(self, key, tok.text)
         if tok.dyn:  # still holds an expansion after substitution: the value is only known to the running shell
             self.env.pop(key, None)
         else:
@@ -629,7 +642,7 @@ class _Walker:
         if self.depth >= MAX_DEPTH:
             self.a.opaque.append("substitution nested too deep to analyse")
             return
-        w = _Walker(self.cwd, self.depth + 1, self.ps, dict(self.env))
+        w = _Walker(self.cwd, self.depth + 1, self.ps, dict(self.env), self.shared)
         w.walk(inner)
         # An executed substitution that downloads is itself the finding when its result is executed.
         self.a.merge(w.a)
@@ -642,19 +655,27 @@ class _Walker:
         if self.depth >= MAX_DEPTH:
             self.a.opaque.append("nested shell too deep to analyse")
             return
-        w = _Walker(self.cwd, self.depth + 1, ps, dict(self.env))
+        w = _Walker(self.cwd, self.depth + 1, ps, dict(self.env), self.shared)
         w.walk(code)
         self.a.merge(w.a)
 
     # -- the command table -----------------------------------------------------
-    def dispatch(self, cmd: str, args: list[Tok], seg: Segment) -> None:  # noqa: C901 - a table, readable as one
+    def dispatch(self, cmd: str, args: list[Tok], seg: Segment) -> None:
         if cmd in _WIN_CMDS or (cmd in ("copy", "move", "ren") and self.ps is False):
             # cmd.exe switches (/q /s /E /grant) are not paths; keep them as flags so they do not become targets
             args = [Tok("-" + a.text[1:], a.dyn, a.glob, a.quoted) if _WIN_SWITCH.match(a.text) else a for a in args]
         pos = [a for a in args if not a.text.startswith("-") or a.text == "-"]
         flags = [a.text for a in args if a.text.startswith("-")]
         win_rec = cmd in _WIN_CMDS and any(f.lower() in ("-s", "-t", "-r") for f in flags)  # /S /T /R switches
+        shell_extra.catalogue(self, cmd, args, pos, seg)
+        shell_extra.script_runners(self, cmd, args, pos)
 
+        for handler in (self._d_core, self._d_files, self._d_programs, self._d_network, self._d_admin):
+            if handler(cmd, args, pos, flags, seg, win_rec):
+                return
+
+    def _d_core(self, cmd: str, args: list[Tok], pos: list[Tok], flags: list[str], seg: Segment, win_rec: bool) -> bool:  # noqa: C901
+        """Shell builtins: cd, export, eval, source, nested shells. True when the command was handled."""
         if cmd in ("cd", "pushd", "set-location", "sl", "chdir"):
             t = pos[0] if pos else None
             if t is None or t.dyn or t.text in ("-",):
@@ -663,59 +684,63 @@ class _Walker:
             else:
                 t = self.sub(t)
                 self.cwd = _join(self.cwd, t.text) if self.cwd else ""
-            return
+            return True
         if cmd in ("export", "declare", "local", "set", "typeset", "readonly"):
             for a in args:
                 if "=" in a.text and not a.text.startswith("-"):
                     k, _, v = a.text.partition("=")
                     self._assign(k, Tok(v, a.dyn))
-            return
+            return True
         if cmd in _SHELLS or cmd in _PS_SHELLS or cmd == "cmd":
             self._shell_c(cmd, args)
-            return
+            return True
         if cmd in ("eval", "iex", "invoke-expression"):
             lit = [a for a in args if not a.dyn]
             if args and len(lit) == len(args):
                 self.recurse(" ".join(self.sub(a).text for a in args), self.ps or cmd != "eval")
             elif args or cmd == "eval":
                 self.a.opaque.append(f"{cmd} of a computed string")
-            return
+            return True
         if cmd in ("source", ".") and pos:
             self.target(pos[0], "read", cmd)
             if _name(Tok(self.sub(pos[0]).text.replace("\\", "/"))) not in _SOURCE_OK and not self.sub(pos[0]).text.replace("\\", "/").endswith(tuple("/" + n for n in _SOURCE_OK)):
                 self.a.opaque.append("sourced file is not analysed")
-            return
+            return True
+        return False
+
+    def _d_files(self, cmd: str, args: list[Tok], pos: list[Tok], flags: list[str], seg: Segment, win_rec: bool) -> bool:  # noqa: C901
+        """Commands that write, copy, delete or search files. True when the command was handled."""
         if cmd in ("tee", "tee-object"):
             for t in pos:
                 self.target(t, "write", cmd)
-            return
+            return True
         if cmd in ("cp", "mv", "install", "ln", "rsync", "scp", "copy-item", "move-item", "rename-item", "copy", "move", "cpi", "mi", "rni", "ren", "mcopy", "ditto", "robocopy", "xcopy"):
             self._copy_like(cmd, args, pos)
-            return
+            return True
         if cmd in _RM:
             for t in pos:
                 self.target(t, "delete", cmd, recursive=win_rec or any(f in ("-r", "-R", "-rf", "-fr", "-recurse", "--recursive", "/s", "-Recurse") for f in flags) or cmd in ("rmdir", "rd"))
             if self.ps:
                 self._ps_named(args, "delete", cmd)
-            return
+            return True
         if cmd == "find":
             self._find(args)
-            return
+            return True
         if cmd == "xargs":
             self._xargs(args)
-            return
+            return True
         if cmd in ("sed", "gsed"):
             if any(re.match(r"^-[a-zA-Z]*i", f) or f.startswith("--in-place") for f in flags):
                 files = pos[1:] if not any(f in ("-e", "-f") for f in flags) else pos
                 for t in files:
                     self.target(t, "write", "sed -i")
-            return
+            return True
         if cmd == "perl" or cmd == "ruby":
             if any(re.match(r"^-[a-zA-Z]*i", f) for f in flags):
                 for t in pos[1:] if flags and "-e" in flags else pos:
                     self.target(t, "write", f"{cmd} -i")
             self._inline(cmd, args)
-            return
+            return True
         if cmd in ("truncate", "touch", "chmod", "chown", "chgrp", "chattr", "setfacl", "icacls", "takeown", "attrib", "set-acl", "mkdir", "shred", "fallocate"):
             skip = 1 if cmd in ("chmod", "chown", "chgrp", "chattr") and pos else 0
             rec = win_rec or any(f in ("-R", "-r", "--recursive", "/s", "/t", "-Recurse") or (f.startswith("-") and not f.startswith("--") and "R" in f[1:]) for f in flags)
@@ -723,28 +748,36 @@ class _Walker:
                 self.a.system.append("chmod sets the setuid/setgid bit")
             for t in pos[skip:]:
                 self.target(t, "write", cmd, recursive=rec)
-            return
+            return True
         if cmd == "dd":
             for a in args:
                 if a.text.startswith("of="):
                     self.target(Tok(a.text[3:], a.dyn, a.glob, a.quoted), "write", "dd")
                     if re.match(r"^/dev/(sd|hd|vd|xvd|nvme|mmcblk|disk|rdisk)", a.text[3:]):
                         self.a.system.append("dd writes to a raw disk device")
-            return
+            return True
+        return False
+
+    def _d_programs(self, cmd: str, args: list[Tok], pos: list[Tok], flags: list[str], seg: Segment, win_rec: bool) -> bool:  # noqa: C901
+        """Version control and interpreters. True when the command was handled."""
         if self._system(cmd, args, pos, flags):
-            return
+            return True
         if cmd == "git":
             self._git(args, pos)
-            return
+            return True
         if cmd in ("python", "python2", "python3", "py", "node", "nodejs", "deno", "bun", "php", "lua"):
             self._inline(cmd, args, seg)
-            return
+            return True
+        return False
+
+    def _d_network(self, cmd: str, args: list[Tok], pos: list[Tok], flags: list[str], seg: Segment, win_rec: bool) -> bool:  # noqa: C901
+        """Fetchers, raw sockets, DNS tools. True when the command was handled."""
         if cmd in _NET_FETCH:
             self._fetch(cmd, args)
-            return
+            return True
         if cmd in _NET_RAW:
             self._raw_net(cmd, args, pos)
-            return
+            return True
         if cmd in _NET_DNS:
             for t in pos:
                 text = self.sub(t).text
@@ -753,34 +786,38 @@ class _Walker:
                     self.a.ops.append(ShellOp("net", h, self.cwd, cmd))
                 elif t.dyn and (m := re.search(r"[)`}]\.((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,})$", text)):
                     self.a.ops.append(ShellOp("net", m.group(1).lower(), self.cwd, cmd, upload=True))  # data in the name: DNS exfiltration
-            return
+            return True
+        return False
+
+    def _d_admin(self, cmd: str, args: list[Tok], pos: list[Tok], flags: list[str], seg: Segment, win_rec: bool) -> bool:  # noqa: C901
+        """Persistence, protections, containers, package managers, archives, and the catch-all URL scan. True when the command was handled."""
         if self._persistence(cmd, args, flags):
-            return
+            return True
         if self._weakening(cmd, args):
-            return
+            return True
         if cmd in ("docker", "podman", "nerdctl") and args and args[0].text in ("run", "create", "exec"):
             self._container(args)
-            return
+            return True
         if cmd in _PKG:
             self._package_sources(cmd, args)
-            return
+            return True
         if cmd in _PS_WRITE_FIRST:
             self._ps_write(cmd, args)
-            return
+            return True
         if cmd in ("out-file", "set-content", "add-content"):
             self._ps_write(cmd, args)
-            return
+            return True
         if cmd in ("python-m",):
-            return
+            return True
         if cmd in ("base64", "xxd", "openssl", "certutil") and ("-d" in flags or "--decode" in flags or "-r" in flags or "-decode" in flags):
             self.a.mentions.append("decoder")
         if cmd in ("tar", "zip", "7z", "unzip", "gzip", "gunzip", "compress-archive", "expand-archive"):
             extracting = cmd in ("unzip", "expand-archive", "7z", "gunzip") or any(f.startswith("-x") for f in flags)
             if not extracting and pos:
                 self.target(pos[0], "write", cmd)  # the archive being created
-            return
+            return True
         if cmd == "gh" or cmd == "git-lfs":
-            return
+            return True
         if cmd not in _TEXT_ONLY:
             # any other program given a URL: certutil, mshta, regsvr32 /i:http://..., a project CLI, ... (code-fetching tools count as a supply step)
             for t in args:
@@ -788,6 +825,7 @@ class _Walker:
                 m = _URL.search(text)
                 if m:
                     self.a.ops.append(ShellOp("net", m.group("host").strip("[]").lower(), self.cwd, cmd, supply=cmd in _CODE_FETCHERS))
+        return True
 
     def _package_sources(self, cmd: str, args: list[Tok]) -> None:
         """Package managers: every URL, index/registry/proxy flag value and (for go) module path names a place code comes from."""
@@ -801,6 +839,8 @@ class _Walker:
                 val = text.split("=", 1)[1] if "=" in text else (texts[i + 1] if i + 1 < len(texts) else None)
             elif cmd == "go" and sub in ("get", "install", "run") and re.match(r"^[a-z0-9-]+(\.[a-z0-9-]+)+/", text):
                 val = text
+            if val and "://" not in val and not re.match(r"^[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}(:\d+)?(/|$)|^\d+\.\d+\.\d+\.\d+", val):
+                val = None  # `-i ./src/in.css` (tailwind) or `-i file` is a file, not an index host
             if val:
                 h = host_of(val if "://" in val else "https://" + val)
                 if h:
@@ -1059,7 +1099,7 @@ class _Walker:
             return
         seg = Segment(words=nested)
         self.a.commands.append("nested")
-        w = _Walker(self.cwd, self.depth + 1, self.ps, dict(self.env))
+        w = _Walker(self.cwd, self.depth + 1, self.ps, dict(self.env), self.shared)
         if self.depth >= MAX_DEPTH:
             self.a.opaque.append("nested command too deep")
             return
@@ -1289,3 +1329,6 @@ def analyze(command: str, cwd: str, powershell: bool = False) -> Analysis:
         for m in _URL.finditer(command):
             w.a.ops.append(ShellOp("net", m.group("host").strip("[]").lower(), w.cwd, "WebClient"))
     return w.a
+
+
+from . import shell_extra  # noqa: E402 - at the bottom: shell_extra needs this module's names at call time

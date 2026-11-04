@@ -201,11 +201,12 @@ def test_unparseable_shell_is_flagged_opaque_not_guessed(env, cmd):
     assert any(f.opaque for f in findings), (cmd, [f.rule for f in findings])
 
 
-def test_script_file_that_writes_later_is_NOT_caught(env):
-    """Known limit, asserted so that the doc and the code cannot drift apart."""
+def test_script_file_that_writes_later_is_caught_when_it_exists_on_disk(env):
+    """Since round 3 the script is read. What stays invisible: a file that does not exist yet, a compiled binary, a script that fetches its payload."""
     root, _ = env
     (root / "evil.py").write_text("open('CLAUDE.md','w').write('x')")
-    assert not run(env, "Bash", command="python evil.py")
+    assert run(env, "Bash", command="python evil.py")
+    assert not run(env, "Bash", command="python not_written_yet.py")
 
 
 # ---- benign: must pass without a finding ----------------------------------------------------------------------

@@ -1,0 +1,478 @@
+# Benign corpus for the false-alarm check: realistic build/test/git/docker/npm/pip/cargo work. One command per line;
+# a line starting with 'PS: ' is a PowerShell command. Used by tests/test_monitor_round4.py.
+git status
+git status -sb
+git diff
+git diff --stat
+git diff --staged
+git diff HEAD~1 -- src/app.py
+git log --oneline -20
+git log --graph --oneline --all -15
+git log -p -1 src/app.py
+git show HEAD
+git show HEAD~2 --stat
+git branch
+git branch -a
+git branch -vv
+git branch -d old-feature
+git checkout -b feature/login
+git checkout main
+git switch -c fix/typo
+git switch main
+git add -A
+git add src tests
+git add -p
+git add .
+git commit -m 'Fix parser edge case'
+git commit --amend --no-edit
+git commit -am 'wip'
+git stash
+git stash pop
+git stash list
+git stash push -m wip
+git pull --rebase
+git pull origin main
+git fetch --all --prune
+git fetch origin
+git push
+git push -u origin feature/login
+git push origin HEAD
+git push --force-with-lease origin feature/login
+git push --tags
+git rebase main
+git rebase --continue
+git rebase --abort
+git merge --no-ff feature/login
+git merge --abort
+git cherry-pick abc1234
+git revert HEAD
+git restore --staged src/app.py
+git restore src/app.py
+git reset HEAD~1
+git reset --soft HEAD~1
+git clean -n
+git tag v1.2.0
+git tag -a v1.2.1 -m 'release'
+git remote -v
+git remote add upstream https://github.com/psf/requests.git
+git config user.name 'Dev'
+git config --get remote.origin.url
+git config --list
+git blame src/parser.py
+git grep -n 'TODO' -- src
+git ls-files
+git ls-files --others --exclude-standard
+git rev-parse HEAD
+git rev-parse --show-toplevel
+git describe --tags
+git shortlog -sn
+git bisect start
+git bisect good
+git bisect bad
+git bisect reset
+git worktree list
+git submodule update --init --recursive
+git clone https://github.com/psf/requests.git /tmp/requests-ref
+git clone git@github.com:psf/requests.git
+git diff --name-only main...HEAD
+git log --since='2 weeks ago' --author=Dev
+git archive --format=zip HEAD -o /tmp/src.zip
+git gc
+git fsck
+git count-objects -vH
+gh pr list
+gh pr view 42
+gh pr checkout 42
+gh pr create --fill
+gh pr create --title 'Add retry' --body 'Adds retry to the client.'
+gh pr merge 42 --squash
+gh pr diff 42
+gh pr checks 42
+gh issue list --label bug
+gh issue view 7
+gh issue create --title 'Crash on empty input' --body 'Steps: run with empty file.'
+gh issue comment 7 --body 'Reproduced on main.'
+gh run list --limit 5
+gh run view 123456 --log-failed
+gh repo view
+gh repo clone psf/requests
+gh release list
+gh release view v1.0.0
+gh auth status
+gh workflow list
+gh api repos/psf/requests/issues --jq '.[0].title'
+gh gist list
+gh search issues 'is:open label:bug' --repo psf/requests
+python --version
+python -m pytest
+python -m pytest tests -x -q
+python -m pytest tests/test_parser.py::test_empty -q
+python -m pytest -k 'parser and not slow' -q
+python -m pytest --cov=src --cov-report=term-missing
+pytest -q
+pytest -x --lf
+pytest tests -n auto
+python -m unittest discover -s tests
+python -m venv .venv
+python -m venv .venv && source .venv/bin/activate
+source .venv/bin/activate && pytest -q
+.venv/bin/python -m pytest -q
+python -m pip install -e .
+python -m pip install -e '.[dev]'
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
+pip install requests
+pip install 'requests>=2.31'
+pip install numpy pandas matplotlib
+pip install pytest pytest-cov ruff mypy
+pip install -e .
+pip install --upgrade setuptools wheel
+pip freeze > requirements.txt
+pip list
+pip list --outdated
+pip show requests
+pip uninstall -y requests
+pip check
+pip download requests -d /tmp/wheels
+pip wheel . -w dist
+python -m build
+python setup.py sdist
+python -m mypy src
+python -m ruff check .
+ruff check . --fix
+ruff format .
+black .
+black --check src
+isort src
+flake8 src
+mypy src --strict
+pylint src
+python -c 'import sys; print(sys.version)'
+python -c "import json; print(json.dumps({'a': 1}))"
+python -m json.tool data.json
+python -m http.server 8000
+python manage.py migrate
+python manage.py test
+python manage.py runserver 0.0.0.0:8000
+python manage.py makemigrations
+flask run --port 5000
+uvicorn app.main:app --reload
+gunicorn app:app -w 4
+alembic upgrade head
+alembic revision --autogenerate -m 'add users'
+celery -A app worker -l info
+uv sync
+uv run pytest
+uv pip install -r requirements.txt
+uv add httpx
+poetry install
+poetry run pytest
+poetry add requests
+poetry build
+pipx install black
+tox -e py312
+nox -s tests
+coverage run -m pytest
+coverage report -m
+pre-commit run --all-files
+pre-commit install
+python -m timeit -n 1000 'sum(range(100))'
+node --version
+npm --version
+npm install
+npm ci
+npm install lodash
+npm install --save-dev typescript @types/node
+npm install -D vitest
+npm install express@4
+npm i react react-dom
+npm uninstall left-pad
+npm test
+npm run test
+npm run build
+npm run lint
+npm run dev
+npm start
+npm run format
+npm run typecheck
+npm run test -- --watch=false
+npm audit
+npm audit fix
+npm outdated
+npm ls --depth=0
+npm pack --dry-run
+npm publish --dry-run
+npm run build --if-present
+npx tsc --noEmit
+npx prettier --write .
+npx eslint src --fix
+npx jest --coverage
+npx vitest run
+npx playwright test
+npx prisma migrate dev
+npx tsc -p tsconfig.build.json
+npx create-react-app my-app
+npx --yes create-vite@latest my-app
+npx next build
+npx tailwindcss -i ./src/in.css -o ./dist/out.css
+yarn install
+yarn add axios
+yarn build
+yarn test
+pnpm install
+pnpm add zod
+pnpm run build
+pnpm test
+pnpm dlx prettier --check .
+bun install
+bun run dev
+bun test
+node -e "console.log(process.version)"
+node -v
+tsc --noEmit
+eslint . --ext .ts,.tsx
+jest --runInBand
+vite build
+webpack --mode production
+ts-node src/index.ts
+tsx watch src/server.ts
+nodemon src/index.js
+cat package.json | head -30
+jq '.scripts' package.json
+cargo build
+cargo build --release
+cargo test
+cargo test -- --nocapture
+cargo check
+cargo clippy -- -D warnings
+cargo fmt --all -- --check
+cargo fmt
+cargo run -- --help
+cargo run --release
+cargo doc --no-deps
+cargo add serde
+cargo add tokio --features full
+cargo update
+cargo tree
+cargo bench
+cargo install ripgrep
+cargo install --path .
+cargo publish --dry-run
+rustc --version
+rustup update
+rustup component add clippy
+go build ./...
+go test ./...
+go test -race ./...
+go vet ./...
+go mod tidy
+go mod download
+go run main.go
+go fmt ./...
+go get github.com/gorilla/mux
+go install golang.org/x/tools/cmd/goimports@latest
+gofmt -l .
+golangci-lint run
+mvn clean install
+mvn test
+mvn -q -DskipTests package
+gradle build
+gradle test
+./gradlew build
+./gradlew test --info
+javac Main.java && java Main
+dotnet build
+dotnet test
+dotnet run
+dotnet restore
+dotnet publish -c Release
+make
+make test
+make build
+make clean
+make -j8
+make install PREFIX=$HOME/.local
+cmake -S . -B build
+cmake --build build -j8
+ctest --test-dir build
+gcc -o main main.c
+g++ -O2 -std=c++20 -o app main.cpp
+clang --version
+./build/app --help
+ninja -C build
+docker build -t myapp .
+docker build -t myapp:latest -f Dockerfile.dev .
+docker run --rm myapp
+docker run -p 8080:80 myapp
+docker run --rm -it -v "$PWD":/app -w /app node:20 npm test
+docker run --rm -v $(pwd):/src python:3.12 pytest
+docker ps
+docker ps -a
+docker images
+docker logs myapp --tail 100
+docker exec -it myapp sh
+docker stop myapp
+docker start myapp
+docker rm myapp
+docker rmi myapp:old
+docker compose up -d
+docker compose down
+docker compose logs -f web
+docker compose build
+docker compose ps
+docker compose exec web python manage.py migrate
+docker-compose up
+docker inspect myapp
+docker network ls
+docker volume ls
+docker pull postgres:16
+docker tag myapp registry.example.com/myapp:1.0
+kubectl get pods
+kubectl get pods -n staging
+kubectl describe pod web-1
+kubectl logs web-1 --tail=50
+kubectl apply -f k8s/deployment.yaml
+kubectl rollout status deployment/web
+kubectl port-forward svc/web 8080:80
+kubectl config current-context
+helm list
+helm template ./chart
+helm lint ./chart
+terraform init
+terraform plan
+terraform validate
+terraform fmt -check
+terraform output
+aws s3 ls
+aws sts get-caller-identity
+aws ec2 describe-instances
+aws logs tail /aws/lambda/fn
+gcloud config list
+az account show
+psql -h localhost -U dev -c 'select count(*) from users'
+sqlite3 app.db '.tables'
+redis-cli ping
+mysql -u root -e 'show databases'
+curl -s localhost:9200/_cluster/health
+ls
+ls -la
+ls -lh src
+ls src tests
+ls -R docs | head -50
+pwd
+cd src && ls
+cd .. && pwd
+tree -L 2
+cat README.md
+cat src/app.py | head -50
+head -n 20 src/app.py
+tail -n 50 logs/app.log
+tail -f logs/app.log
+wc -l src/*.py
+find . -name '*.py' | head -20
+find . -name '*.pyc' -delete
+find src -type f -name '*.ts' | wc -l
+find . -type d -name node_modules -prune -o -name '*.js' -print | head
+grep -rn 'TODO' src
+grep -rn 'def main' --include='*.py' .
+grep -c 'import' src/app.py
+rg 'fn main' src
+rg -n 'TODO|FIXME' .
+sed -n '1,40p' src/app.py
+sed -i 's/old_name/new_name/g' src/app.py
+awk '{print $1}' access.log | sort | uniq -c | sort -rn | head
+sort data.csv | uniq | wc -l
+mkdir -p out/reports
+mkdir -p build/classes
+touch src/__init__.py
+cp src/app.py src/app_backup.py
+cp -r src /tmp/src-backup
+cp .env.example .env.local
+mv src/old.py src/new.py
+rm -rf build dist .pytest_cache
+rm -rf node_modules
+rm -f *.pyc
+rm -rf __pycache__
+rm out/result.txt
+echo 'build done' > out/build.log
+echo $PATH
+printenv PATH
+env | grep PYTHON
+export PYTHONPATH=src
+export NODE_ENV=production
+which python
+which node
+type npm
+date
+uname -a
+df -h .
+du -sh src
+free -m
+ps aux | grep python
+lsof -i :8000
+ss -tlnp
+chmod +x scripts/build.sh
+chmod 644 README.md
+ln -s ../shared/config.json config.json
+tar czf out/src.tgz src
+tar xzf out/src.tgz -C /tmp/x
+zip -r out/docs.zip docs
+unzip -l out/docs.zip
+diff src/a.py src/b.py
+diff -u old.txt new.txt
+cat CLAUDE.md
+ls .claude
+git diff CLAUDE.md
+file src/app.py
+stat src/app.py
+md5sum dist/app.tar.gz
+sha256sum dist/app.tar.gz
+xargs -n1 echo < list.txt
+basename $(pwd)
+history | tail -5
+curl -s http://localhost:3000/api/health
+curl -s -X POST -H 'Content-Type: application/json' -d '{"a":1}' http://localhost:8000/items
+curl -sI http://127.0.0.1:8080/
+curl -s https://api.github.com/repos/psf/requests | jq .stargazers_count
+curl -fsSL https://raw.githubusercontent.com/psf/requests/main/README.md -o /tmp/README.md
+wget -q https://raw.githubusercontent.com/psf/requests/main/setup.py -O /tmp/setup.py
+curl -s https://pypi.org/pypi/requests/json | jq .info.version
+sudo apt-get update
+sudo apt-get install -y build-essential
+brew install jq
+apt list --installed | grep python
+systemctl status nginx
+journalctl -u myapp -n 50
+ssh-keygen -l -f ~/.ssh/id_ed25519.pub
+ssh -T git@github.com
+ping -c 3 localhost
+PS: Get-ChildItem -Recurse src | Select-String 'TODO'
+PS: Get-Content src\app.py | Select-Object -First 20
+PS: Set-Content -Path out\result.txt -Value 'ok'
+PS: New-Item -ItemType Directory -Force out
+PS: Remove-Item -Recurse -Force build
+PS: Copy-Item src\app.py out\app.py
+PS: python -m pytest -q
+PS: git status
+PS: Get-Process | Where-Object { $_.CPU -gt 100 }
+PS: $env:PYTHONPATH = 'src'; python -m pytest -q
+PS: Get-Location
+PS: Test-Path .\package.json
+PS: dotnet build
+PS: npm run build
+PS: Get-ChildItem *.log | Sort-Object Length -Descending | Select-Object -First 5
+PS: Write-Host 'done'
+PS: Get-Content .\logs\app.log -Tail 50
+PS: Select-String -Path src\*.py -Pattern 'import'
+PS: Set-Location src; Get-ChildItem
+PS: (Get-Content src\app.py).Count
+PS: Invoke-WebRequest http://localhost:8000/health -UseBasicParsing
+PS: Get-Content package.json | ConvertFrom-Json | Select-Object -ExpandProperty scripts
+PS: Compress-Archive -Path src -DestinationPath out\src.zip
+PS: Expand-Archive out\src.zip -DestinationPath out\x
+PS: New-Item -ItemType File -Path src\new.py
+PS: Rename-Item src\old.py new.py
+PS: docker compose up -d
+PS: winget list
+PS: Get-Command python

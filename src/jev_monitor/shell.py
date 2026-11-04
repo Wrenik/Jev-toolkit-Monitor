@@ -61,7 +61,9 @@ class Analysis:
     # round 3 (see shell_extra.py): (rule, detail) pairs that are findings on their own, and facts the checker combines with the policy
     high: list[tuple[str, str]] = field(default_factory=list)
     medium: list[tuple[str, str]] = field(default_factory=list)
-    publish: list[str] = field(default_factory=list)  # commands that publish to a service (gh gist create, aws s3 cp, rclone copy ...)
+    publish: list[str] = field(
+        default_factory=list
+    )  # commands that publish to a service (gh gist create, aws s3 cp, rclone copy ...)
     archives: list[str] = field(default_factory=list)  # copy/archive commands (cp, tar, zip, rsync ...)
     sweeps: list[str] = field(default_factory=list)  # search commands (find, grep, Get-ChildItem ...)
     cred: list[str] = field(default_factory=list)  # reads of credential stores
@@ -279,7 +281,14 @@ class _Lexer:
             self._reset_word()  # a bare digit word right before is an fd number: 2> file
         else:
             self.flush()
-        op = next((cand for cand in ("<<<", "<<-", "<<", ">>", ">|", "&>>", "&>", ">&", "<&", ">", "<") if text.startswith(cand, i)), "")
+        op = next(
+            (
+                cand
+                for cand in ("<<<", "<<-", "<<", ">>", ">|", "&>>", "&>", ">&", "<&", ">", "<")
+                if text.startswith(cand, i)
+            ),
+            "",
+        )
         self.i += len(op)
         if op in ("<<", "<<-"):
             self.pending_heredocs.append((self._heredoc_delimiter(), op == "<<-"))
@@ -288,7 +297,9 @@ class _Lexer:
         return True
 
     def _try_ps_paren(self) -> bool:
-        if not (self.ps and self.text[self.i] == "(" and (self.segs[-1].words or self.has or self.redirect_op is not None)):
+        if not (
+            self.ps and self.text[self.i] == "(" and (self.segs[-1].words or self.has or self.redirect_op is not None)
+        ):
             return False
         end = _match_paren(self.text, self.i)
         self._subst(self.i, self.i + 1, end)
@@ -320,7 +331,12 @@ class _Lexer:
 
     def _try_lone_brace(self) -> bool:
         text, i = self.text, self.i
-        if text[i] in "{}" and not self.ps and not self.has and (i + 1 >= self.n or text[i + 1].isspace() or text[i + 1] == ";"):
+        if (
+            text[i] in "{}"
+            and not self.ps
+            and not self.has
+            and (i + 1 >= self.n or text[i + 1].isspace() or text[i + 1] == ";")
+        ):
             self.i += 1  # a lone { or } is shell grouping, not an argument
             return True
         return False
@@ -339,8 +355,20 @@ class _Lexer:
         self.i = j + 1
         return True
 
-    _HANDLERS = ("_try_blank", "_try_newline", "_try_comment", "_try_single_quote", "_try_double_quote", "_try_escape", "_try_substitution",
-                 "_try_redirect", "_try_ps_paren", "_try_operator", "_try_lone_brace", "_try_variable")
+    _HANDLERS = (
+        "_try_blank",
+        "_try_newline",
+        "_try_comment",
+        "_try_single_quote",
+        "_try_double_quote",
+        "_try_escape",
+        "_try_substitution",
+        "_try_redirect",
+        "_try_ps_paren",
+        "_try_operator",
+        "_try_lone_brace",
+        "_try_variable",
+    )
 
     def run(self) -> list[Segment]:
         handlers = [getattr(self, h) for h in self._HANDLERS]
@@ -363,25 +391,146 @@ def tokenize(text: str, ps: bool = False) -> list[Segment]:
 
 # ------------------------------------------------------------------ command tables
 _CONTROL_WORDS = {"do", "then", "else", "elif", "if", "while", "until", "!", "{"}
-_WRAPPERS = {"sudo", "doas", "nohup", "time", "command", "builtin", "exec", "nice", "setsid", "stdbuf", "ionice", "chronic", "unbuffer"}
+_WRAPPERS = {
+    "sudo",
+    "doas",
+    "nohup",
+    "time",
+    "command",
+    "builtin",
+    "exec",
+    "nice",
+    "setsid",
+    "stdbuf",
+    "ionice",
+    "chronic",
+    "unbuffer",
+}
 _SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "fish", "ash"}
 _PS_SHELLS = {"powershell", "pwsh"}
-_INTERPRETERS = _SHELLS | _PS_SHELLS | {"python", "python2", "python3", "py", "node", "nodejs", "deno", "bun", "perl", "ruby", "php", "lua", "iex", "invoke-expression", "source", ".", "eval", "cmd"}
-_DECODERS = {"base64", "xxd", "openssl", "gunzip", "zcat", "gzip", "unzip", "uudecode", "certutil", "rev", "tr", "basenc"}
-_NET_FETCH = {"curl", "wget", "iwr", "irm", "invoke-webrequest", "invoke-restmethod", "fetch", "aria2c", "http", "https", "xh", "start-bitstransfer"}
-_NET_RAW = {"nc", "ncat", "netcat", "socat", "telnet", "ssh", "scp", "sftp", "ftp", "tftp", "rsync", "mosh", "test-netconnection", "tnc"}
+_INTERPRETERS = (
+    _SHELLS
+    | _PS_SHELLS
+    | {
+        "python",
+        "python2",
+        "python3",
+        "py",
+        "node",
+        "nodejs",
+        "deno",
+        "bun",
+        "perl",
+        "ruby",
+        "php",
+        "lua",
+        "iex",
+        "invoke-expression",
+        "source",
+        ".",
+        "eval",
+        "cmd",
+    }
+)
+_DECODERS = {
+    "base64",
+    "xxd",
+    "openssl",
+    "gunzip",
+    "zcat",
+    "gzip",
+    "unzip",
+    "uudecode",
+    "certutil",
+    "rev",
+    "tr",
+    "basenc",
+}
+_NET_FETCH = {
+    "curl",
+    "wget",
+    "iwr",
+    "irm",
+    "invoke-webrequest",
+    "invoke-restmethod",
+    "fetch",
+    "aria2c",
+    "http",
+    "https",
+    "xh",
+    "start-bitstransfer",
+}
+_NET_RAW = {
+    "nc",
+    "ncat",
+    "netcat",
+    "socat",
+    "telnet",
+    "ssh",
+    "scp",
+    "sftp",
+    "ftp",
+    "tftp",
+    "rsync",
+    "mosh",
+    "test-netconnection",
+    "tnc",
+}
 _NET_DNS = {"nslookup", "dig", "host", "ping", "resolve-dnsname", "tracert", "traceroute"}
 _RM = {"rm", "rmdir", "unlink", "shred", "del", "erase", "rd", "remove-item", "ri", "trash", "srm"}
-_PS_WRITE_FIRST = {"set-content", "sc", "add-content", "ac", "out-file", "clear-content", "clc", "new-item", "ni", "tee-object", "export-csv", "export-clixml", "set-itemproperty", "write-output"}
+_PS_WRITE_FIRST = {
+    "set-content",
+    "sc",
+    "add-content",
+    "ac",
+    "out-file",
+    "clear-content",
+    "clc",
+    "new-item",
+    "ni",
+    "tee-object",
+    "export-csv",
+    "export-clixml",
+    "set-itemproperty",
+    "write-output",
+}
 _PS_COPYMOVE = {"copy-item", "cpi", "move-item", "mi", "rename-item", "rni", "copy", "move", "cp", "mv", "ren"}
 _PS_PATH_PARAMS = {"-path", "-filepath", "-literalpath", "-destination", "-outfile", "-target", "-value"}
-_PKG = {"pip", "pip3", "npm", "npx", "yarn", "pnpm", "cargo", "go", "gem", "bundle", "uv", "poetry", "conda", "brew", "apt", "apt-get", "choco", "winget", "scoop"}
+_PKG = {
+    "pip",
+    "pip3",
+    "npm",
+    "npx",
+    "yarn",
+    "pnpm",
+    "cargo",
+    "go",
+    "gem",
+    "bundle",
+    "uv",
+    "poetry",
+    "conda",
+    "brew",
+    "apt",
+    "apt-get",
+    "choco",
+    "winget",
+    "scoop",
+}
 _CODE_WRITE = [
     re.compile(r"""open\(\s*(?P<q>['"])(?P<p>[^'"]+)(?P=q)\s*,\s*['"][^'"]*[wax+][^'"]*['"]"""),
-    re.compile(r"""(?:Path|pathlib\.Path)\(\s*(?P<q>['"])(?P<p>[^'"]+)(?P=q)\s*\)\s*\.\s*(?:write_text|write_bytes|unlink|rename|replace|touch)"""),
-    re.compile(r"""(?:os\.(?:remove|unlink|rename|replace|truncate)|shutil\.(?:copy|copyfile|copy2|move|rmtree))\(\s*(?:[^,'")]+,\s*)?(?P<q>['"])(?P<p>[^'"]+)(?P=q)"""),
-    re.compile(r"""(?:fs\.)?(?:writeFileSync|writeFile|appendFileSync|appendFile|rmSync|unlinkSync|unlink|renameSync|copyFileSync|createWriteStream)\(\s*(?P<q>['"`])(?P<p>[^'"`]+)(?P=q)"""),
-    re.compile(r"""\[(?:System\.)?IO\.File\]::(?:Write\w*|Append\w*|Delete|Copy|Move|Create\w*|Replace)\(\s*(?P<q>['"])(?P<p>[^'"]+)(?P=q)"""),
+    re.compile(
+        r"""(?:Path|pathlib\.Path)\(\s*(?P<q>['"])(?P<p>[^'"]+)(?P=q)\s*\)\s*\.\s*(?:write_text|write_bytes|unlink|rename|replace|touch)"""
+    ),
+    re.compile(
+        r"""(?:os\.(?:remove|unlink|rename|replace|truncate)|shutil\.(?:copy|copyfile|copy2|move|rmtree))\(\s*(?:[^,'")]+,\s*)?(?P<q>['"])(?P<p>[^'"]+)(?P=q)"""
+    ),
+    re.compile(
+        r"""(?:fs\.)?(?:writeFileSync|writeFile|appendFileSync|appendFile|rmSync|unlinkSync|unlink|renameSync|copyFileSync|createWriteStream)\(\s*(?P<q>['"`])(?P<p>[^'"`]+)(?P=q)"""
+    ),
+    re.compile(
+        r"""\[(?:System\.)?IO\.File\]::(?:Write\w*|Append\w*|Delete|Copy|Move|Create\w*|Replace)\(\s*(?P<q>['"])(?P<p>[^'"]+)(?P=q)"""
+    ),
     re.compile(r"""File\.(?:write|open|delete|rename|binwrite)\(\s*(?P<q>['"])(?P<p>[^'"]+)(?P=q)"""),
     re.compile(r"""file_put_contents\(\s*(?P<q>['"])(?P<p>[^'"]+)(?P=q)"""),
 ]
@@ -394,16 +543,109 @@ _HOSTLIKE = re.compile(r"^(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}$|^\d{1,3}(?:\.\d{1,3}
 _ENCODED_PS = re.compile(r"(?i)(^|\s)-e(nc|ncodedcommand)?\b")
 
 
-_SECRET_VAR = re.compile(r"(?i)(?:\$\{?(?:env:)?|%)\w*(?:token|secret|passw(?:or)?d|api_?key|private_?key|credential|access_?key)\w*")
+_SECRET_VAR = re.compile(
+    r"(?i)(?:\$\{?(?:env:)?|%)\w*(?:token|secret|passw(?:or)?d|api_?key|private_?key|credential|access_?key)\w*"
+)
 _DEV_TCP = re.compile(r"/dev/(?:tcp|udp)/([^/\s'\"]+)/")
-_SOURCE_OK = {"activate", "activate.sh", "activate.fish", "activate.ps1", "nvm.sh", "conda.sh"}  # sourcing these is routine
-_WIN_SWITCH = re.compile(r"^/(?:[A-Za-z?](?::\S*)?|grant|deny|remove|inheritance|reset|save|restore|setowner|findsid|verify|substitute)$", re.IGNORECASE)
+_SOURCE_OK = {
+    "activate",
+    "activate.sh",
+    "activate.fish",
+    "activate.ps1",
+    "nvm.sh",
+    "conda.sh",
+}  # sourcing these is routine
+_WIN_SWITCH = re.compile(
+    r"^/(?:[A-Za-z?](?::\S*)?|grant|deny|remove|inheritance|reset|save|restore|setowner|findsid|verify|substitute)$",
+    re.IGNORECASE,
+)
 _WIN_CMDS = {"del", "erase", "rd", "rmdir", "xcopy", "robocopy", "attrib", "icacls", "cacls", "takeown"}
-_TEXT_ONLY = {"echo", "printf", "grep", "egrep", "fgrep", "rg", "ag", "awk", "sed", "cat", "head", "tail", "less", "more", "wc", "diff", "tr", "sort", "uniq", "cut",
-              "write-host", "write-output", "write-error", "select-string", "findstr", "ls", "dir", "type", "true", "false", "test", "[", "open", "xdg-open", "start", "man", "which", "where"}
-_CODE_FETCHERS = {"certutil", "bitsadmin", "mshta", "regsvr32", "rundll32", "msiexec", "cscript", "wscript", "msbuild", "installutil"}  # fetch or run remote code
-_PKG_SOURCE_FLAGS = {"--index-url", "-i", "--extra-index-url", "--trusted-host", "--registry", "--source", "--find-links", "--index", "--default-index", "--proxy", "--repository-url", "--git", "--registry-url"}
-_RUNNABLE = (".sh", ".bash", ".zsh", ".ps1", ".py", ".pl", ".rb", ".js", ".mjs", ".bat", ".cmd", ".php", ".vbs", ".exe", ".msi", ".run", ".bin")
+_TEXT_ONLY = {
+    "echo",
+    "printf",
+    "grep",
+    "egrep",
+    "fgrep",
+    "rg",
+    "ag",
+    "awk",
+    "sed",
+    "cat",
+    "head",
+    "tail",
+    "less",
+    "more",
+    "wc",
+    "diff",
+    "tr",
+    "sort",
+    "uniq",
+    "cut",
+    "write-host",
+    "write-output",
+    "write-error",
+    "select-string",
+    "findstr",
+    "ls",
+    "dir",
+    "type",
+    "true",
+    "false",
+    "test",
+    "[",
+    "open",
+    "xdg-open",
+    "start",
+    "man",
+    "which",
+    "where",
+}
+_CODE_FETCHERS = {
+    "certutil",
+    "bitsadmin",
+    "mshta",
+    "regsvr32",
+    "rundll32",
+    "msiexec",
+    "cscript",
+    "wscript",
+    "msbuild",
+    "installutil",
+}  # fetch or run remote code
+_PKG_SOURCE_FLAGS = {
+    "--index-url",
+    "-i",
+    "--extra-index-url",
+    "--trusted-host",
+    "--registry",
+    "--source",
+    "--find-links",
+    "--index",
+    "--default-index",
+    "--proxy",
+    "--repository-url",
+    "--git",
+    "--registry-url",
+}
+_RUNNABLE = (
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".ps1",
+    ".py",
+    ".pl",
+    ".rb",
+    ".js",
+    ".mjs",
+    ".bat",
+    ".cmd",
+    ".php",
+    ".vbs",
+    ".exe",
+    ".msi",
+    ".run",
+    ".bin",
+)
 _SAFE_VARS = {"home", "userprofile", "temp", "tmp", "tmpdir", "appdata", "localappdata"}
 
 
@@ -411,7 +653,10 @@ def _unresolvable(text: str) -> bool:
     """Does `text` hold an expansion the monitor cannot resolve itself? HOME-like variables it can."""
     if "`" in text or "$(" in text or "<(" in text:
         return True
-    names = [next(g for g in m.groups() if g) for m in re.finditer(r"\$env:(\w+)|\$\{(\w+)\}|\$(\w+)|%(\w+)%", text, flags=re.IGNORECASE)]
+    names = [
+        next(g for g in m.groups() if g)
+        for m in re.finditer(r"\$env:(\w+)|\$\{(\w+)\}|\$(\w+)|%(\w+)%", text, flags=re.IGNORECASE)
+    ]
     if re.search(r"\$[^\w{(e]", text):
         return True
     return any(n.lower() not in _SAFE_VARS for n in names)
@@ -449,7 +694,9 @@ def host_of(url_or_host: str) -> str | None:
 class _Walker:
     def __init__(self, cwd: str, depth: int, ps: bool, env: dict[str, str], shared: dict | None = None):
         self.a = Analysis()
-        self.shared = shared if shared is not None else {"bytes": 0}  # budget for script files read, shared with child walkers
+        self.shared = (
+            shared if shared is not None else {"bytes": 0}
+        )  # budget for script files read, shared with child walkers
         self.chmodded: set[str] = set()  # base names given an execute bit earlier in this command line
         self.cwd = cwd
         self.depth = depth
@@ -482,7 +729,17 @@ class _Walker:
     def target(self, tok: Tok, kind: str, via: str, recursive: bool = False, upload: bool = False) -> None:
         tok = self.sub(tok)
         text = tok.text
-        if not text or text in ("-", "/dev/null", "nul", "NUL", "$null", "/dev/stdout", "/dev/stderr", "/dev/stdin", "/dev/tty"):
+        if not text or text in (
+            "-",
+            "/dev/null",
+            "nul",
+            "NUL",
+            "$null",
+            "/dev/stdout",
+            "/dev/stderr",
+            "/dev/stdin",
+            "/dev/tty",
+        ):
             return
         if text.startswith("&") and text[1:].isdigit():
             return
@@ -492,14 +749,23 @@ class _Walker:
         if not self.cwd and not re.match(r"^([A-Za-z]:)?[/\\~]", text) and kind in ("write", "delete"):
             self.a.opaque.append(f"{via}: relative {kind} target after cd into a computed folder ({text[:40]})")
             return
-        if tok.glob and not tok.quoted and re.fullmatch(r"(/|~|\$HOME|\$\{HOME\}|%USERPROFILE%|[A-Za-z]:)[\/]?\*", text):
-            self.a.ops.append(ShellOp(kind, text, self.cwd, via, upload, True))  # `rm -rf /*`: keep it as one catastrophic target
+        if (
+            tok.glob
+            and not tok.quoted
+            and re.fullmatch(r"(/|~|\$HOME|\$\{HOME\}|%USERPROFILE%|[A-Za-z]:)[\/]?\*", text)
+        ):
+            self.a.ops.append(
+                ShellOp(kind, text, self.cwd, via, upload, True)
+            )  # `rm -rf /*`: keep it as one catastrophic target
             return
         if tok.glob and not tok.quoted:
             hits = globlib.glob(text if os.path.isabs(text) else os.path.join(self.cwd, text))
             if not hits:
                 self.a.words.append(text)
-                if kind in ("write", "delete"):  # nothing matches HERE, but the pattern's folder still says where it would act
+                if kind in (
+                    "write",
+                    "delete",
+                ):  # nothing matches HERE, but the pattern's folder still says where it would act
                     self.a.ops.append(ShellOp(kind, text, self.cwd, via, upload, recursive))
                 return
             for h in hits[:50]:
@@ -530,15 +796,33 @@ class _Walker:
                 chain = []
             cmd = self.segment(seg)
             chain.append((seg, cmd))
-            if self.downloaded and (cmd in self.downloaded or (cmd in _INTERPRETERS and any(_basename(w.text) in self.downloaded for w in self.last_args if not w.text.startswith("-")))):
+            if self.downloaded and (
+                cmd in self.downloaded
+                or (
+                    cmd in _INTERPRETERS
+                    and any(_basename(w.text) in self.downloaded for w in self.last_args if not w.text.startswith("-"))
+                )
+            ):
                 self.a.pipe_exec.append("a file downloaded earlier in this command is executed")
-            if seg.piped_from_prev and cmd in _INTERPRETERS | {"iex", "invoke-expression"} and not self._has_script(self.last_args, cmd):
+            if (
+                seg.piped_from_prev
+                and cmd in _INTERPRETERS | {"iex", "invoke-expression"}
+                and not self._has_script(self.last_args, cmd)
+            ):
                 up = [c for _, c in chain[:-1]]
                 if any(c in _NET_FETCH for c in up):
                     self.a.pipe_exec.append(f"downloaded text is piped into {cmd}")
-                elif any(c in _DECODERS for c in up) or any(c == "echo" or c == "printf" for c in up) and any(c in _DECODERS for c in up):
+                elif (
+                    any(c in _DECODERS for c in up)
+                    or any(c == "echo" or c == "printf" for c in up)
+                    and any(c in _DECODERS for c in up)
+                ):
                     self.a.pipe_exec.append(f"decoded text is piped into {cmd}")
-                elif any(c in ("echo", "printf") and any(re.search(r"\\x[0-9a-fA-F]{2}|\\[0-7]{3}|\\u[0-9a-fA-F]{4}", w.text) for w in s.words) for s, c in chain[:-1]):
+                elif any(
+                    c in ("echo", "printf")
+                    and any(re.search(r"\\x[0-9a-fA-F]{2}|\\[0-7]{3}|\\u[0-9a-fA-F]{4}", w.text) for w in s.words)
+                    for s, c in chain[:-1]
+                ):
                     self.a.pipe_exec.append(f"escape-encoded text is piped into {cmd}")
 
     def _has_script(self, args: list[Tok], cmd: str) -> bool:
@@ -553,13 +837,29 @@ class _Walker:
             k, _, v = words[0].text.partition("=")
             self._assign(k, Tok(v, words[0].dyn, words[0].glob, words[0].quoted))
             words.pop(0)
-        if self.ps and words and re.match(r"^\$(env:)?\w+$", words[0].text) and len(words) >= 3 and words[1].text == "=":
-            self._assign(words[0].text.lstrip("$").removeprefix("env:"), Tok(" ".join(w.text for w in words[2:]), any(w.dyn for w in words[2:])))
+        if (
+            self.ps
+            and words
+            and re.match(r"^\$(env:)?\w+$", words[0].text)
+            and len(words) >= 3
+            and words[1].text == "="
+        ):
+            self._assign(
+                words[0].text.lstrip("$").removeprefix("env:"),
+                Tok(" ".join(w.text for w in words[2:]), any(w.dyn for w in words[2:])),
+            )
             words = []  # the whole segment was an assignment
         elif self.ps and len(words) == 1 and (m := re.match(r"^\$(?:env:)?(\w+)[-+*/]?=(.*)$", words[0].text)):
             self._assign(m.group(1), Tok(m.group(2), words[0].dyn and "$" in m.group(2)))
             words = []  # `$ErrorActionPreference='Stop'` written without spaces
-        if self.ps and words and not seg.call and words[0].dyn and words[0].text[:1] in "$[" and not words[0].text.startswith("$("):
+        if (
+            self.ps
+            and words
+            and not seg.call
+            and words[0].dyn
+            and words[0].text[:1] in "$["
+            and not words[0].text.startswith("$(")
+        ):
             # a PowerShell expression statement (`$env:PATH -split ';'`, `[IO.File]::ReadAllText(..)`), not a command to run
             self.scan_code(" ".join(w.text for w in words), "PowerShell expression")
             words = []
@@ -593,7 +893,10 @@ class _Walker:
                     while words and words[0].text.startswith("-"):
                         flag = words.pop(0).text
                         shell = shell or flag in ("-s", "-i", "--shell", "--login")
-                        if flag in ("-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U", "--user", "--group") and words:
+                        if (
+                            flag in ("-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U", "--user", "--group")
+                            and words
+                        ):
                             words.pop(0)
                     if shell and not words:
                         self.a.persist.append(f"{n} opens an interactive root shell")
@@ -706,23 +1009,54 @@ class _Walker:
             return True
         if cmd in ("source", ".") and pos:
             self.target(pos[0], "read", cmd)
-            if _name(Tok(self.sub(pos[0]).text.replace("\\", "/"))) not in _SOURCE_OK and not self.sub(pos[0]).text.replace("\\", "/").endswith(tuple("/" + n for n in _SOURCE_OK)):
+            if _name(Tok(self.sub(pos[0]).text.replace("\\", "/"))) not in _SOURCE_OK and not self.sub(
+                pos[0]
+            ).text.replace("\\", "/").endswith(tuple("/" + n for n in _SOURCE_OK)):
                 self.a.opaque.append("sourced file is not analysed")
             return True
         return False
 
-    def _d_files(self, cmd: str, args: list[Tok], pos: list[Tok], flags: list[str], seg: Segment, win_rec: bool) -> bool:
+    def _d_files(
+        self, cmd: str, args: list[Tok], pos: list[Tok], flags: list[str], seg: Segment, win_rec: bool
+    ) -> bool:
         """Commands that write, copy, delete or search files. True when the command was handled."""
         if cmd in ("tee", "tee-object"):
             for t in pos:
                 self.target(t, "write", cmd)
             return True
-        if cmd in ("cp", "mv", "install", "ln", "rsync", "scp", "copy-item", "move-item", "rename-item", "copy", "move", "cpi", "mi", "rni", "ren", "mcopy", "ditto", "robocopy", "xcopy"):
+        if cmd in (
+            "cp",
+            "mv",
+            "install",
+            "ln",
+            "rsync",
+            "scp",
+            "copy-item",
+            "move-item",
+            "rename-item",
+            "copy",
+            "move",
+            "cpi",
+            "mi",
+            "rni",
+            "ren",
+            "mcopy",
+            "ditto",
+            "robocopy",
+            "xcopy",
+        ):
             self._copy_like(cmd, args, pos)
             return True
         if cmd in _RM:
             for t in pos:
-                self.target(t, "delete", cmd, recursive=win_rec or any(f in ("-r", "-R", "-rf", "-fr", "-recurse", "--recursive", "/s", "-Recurse") for f in flags) or cmd in ("rmdir", "rd"))
+                self.target(
+                    t,
+                    "delete",
+                    cmd,
+                    recursive=win_rec
+                    or any(f in ("-r", "-R", "-rf", "-fr", "-recurse", "--recursive", "/s", "-Recurse") for f in flags)
+                    or cmd in ("rmdir", "rd"),
+                )
             if self.ps:
                 self._ps_named(args, "delete", cmd)
             return True
@@ -744,10 +1078,33 @@ class _Walker:
                     self.target(t, "write", f"{cmd} -i")
             self._inline(cmd, args)
             return True
-        if cmd in ("truncate", "touch", "chmod", "chown", "chgrp", "chattr", "setfacl", "icacls", "takeown", "attrib", "set-acl", "mkdir", "shred", "fallocate"):
+        if cmd in (
+            "truncate",
+            "touch",
+            "chmod",
+            "chown",
+            "chgrp",
+            "chattr",
+            "setfacl",
+            "icacls",
+            "takeown",
+            "attrib",
+            "set-acl",
+            "mkdir",
+            "shred",
+            "fallocate",
+        ):
             skip = 1 if cmd in ("chmod", "chown", "chgrp", "chattr") and pos else 0
-            rec = win_rec or any(f in ("-R", "-r", "--recursive", "/s", "/t", "-Recurse") or (f.startswith("-") and not f.startswith("--") and "R" in f[1:]) for f in flags)
-            if cmd == "chmod" and pos and re.search(r"^[0-7]?[2-7][0-7]{3}$|^[ugoa]*[+=][rwxXt]*s", self.sub(pos[0]).text):
+            rec = win_rec or any(
+                f in ("-R", "-r", "--recursive", "/s", "/t", "-Recurse")
+                or (f.startswith("-") and not f.startswith("--") and "R" in f[1:])
+                for f in flags
+            )
+            if (
+                cmd == "chmod"
+                and pos
+                and re.search(r"^[0-7]?[2-7][0-7]{3}$|^[ugoa]*[+=][rwxXt]*s", self.sub(pos[0]).text)
+            ):
                 self.a.system.append("chmod sets the setuid/setgid bit")
             for t in pos[skip:]:
                 self.target(t, "write", cmd, recursive=rec)
@@ -761,7 +1118,9 @@ class _Walker:
             return True
         return False
 
-    def _d_programs(self, cmd: str, args: list[Tok], pos: list[Tok], flags: list[str], seg: Segment, win_rec: bool) -> bool:
+    def _d_programs(
+        self, cmd: str, args: list[Tok], pos: list[Tok], flags: list[str], seg: Segment, win_rec: bool
+    ) -> bool:
         """Version control and interpreters. True when the command was handled."""
         if self._system(cmd, args, pos, flags):
             return True
@@ -773,7 +1132,9 @@ class _Walker:
             return True
         return False
 
-    def _d_network(self, cmd: str, args: list[Tok], pos: list[Tok], flags: list[str], seg: Segment, win_rec: bool) -> bool:
+    def _d_network(
+        self, cmd: str, args: list[Tok], pos: list[Tok], flags: list[str], seg: Segment, win_rec: bool
+    ) -> bool:
         """Fetchers, raw sockets, DNS tools. True when the command was handled."""
         if cmd in _NET_FETCH:
             self._fetch(cmd, args)
@@ -788,11 +1149,15 @@ class _Walker:
                 if h:
                     self.a.ops.append(ShellOp("net", h, self.cwd, cmd))
                 elif t.dyn and (m := re.search(r"[)`}]\.((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,})$", text)):
-                    self.a.ops.append(ShellOp("net", m.group(1).lower(), self.cwd, cmd, upload=True))  # data in the name: DNS exfiltration
+                    self.a.ops.append(
+                        ShellOp("net", m.group(1).lower(), self.cwd, cmd, upload=True)
+                    )  # data in the name: DNS exfiltration
             return True
         return False
 
-    def _d_admin(self, cmd: str, args: list[Tok], pos: list[Tok], flags: list[str], seg: Segment, win_rec: bool) -> bool:
+    def _d_admin(
+        self, cmd: str, args: list[Tok], pos: list[Tok], flags: list[str], seg: Segment, win_rec: bool
+    ) -> bool:
         """Persistence, protections, containers, package managers, archives, and the catch-all URL scan. True when the command was handled."""
         if self._persistence(cmd, args, flags):
             return True
@@ -812,7 +1177,9 @@ class _Walker:
             return True
         if cmd in ("python-m",):
             return True
-        if cmd in ("base64", "xxd", "openssl", "certutil") and ("-d" in flags or "--decode" in flags or "-r" in flags or "-decode" in flags):
+        if cmd in ("base64", "xxd", "openssl", "certutil") and (
+            "-d" in flags or "--decode" in flags or "-r" in flags or "-decode" in flags
+        ):
             self.a.mentions.append("decoder")
         if cmd in ("tar", "zip", "7z", "unzip", "gzip", "gunzip", "compress-archive", "expand-archive"):
             extracting = cmd in ("unzip", "expand-archive", "7z", "gunzip") or any(f.startswith("-x") for f in flags)
@@ -827,7 +1194,9 @@ class _Walker:
                 text = self.sub(t).text
                 m = _URL.search(text)
                 if m:
-                    self.a.ops.append(ShellOp("net", m.group("host").strip("[]").lower(), self.cwd, cmd, supply=cmd in _CODE_FETCHERS))
+                    self.a.ops.append(
+                        ShellOp("net", m.group("host").strip("[]").lower(), self.cwd, cmd, supply=cmd in _CODE_FETCHERS)
+                    )
         return True
 
     def _package_sources(self, cmd: str, args: list[Tok]) -> None:
@@ -842,7 +1211,11 @@ class _Walker:
                 val = text.split("=", 1)[1] if "=" in text else (texts[i + 1] if i + 1 < len(texts) else None)
             elif cmd == "go" and sub in ("get", "install", "run") and re.match(r"^[a-z0-9-]+(\.[a-z0-9-]+)+/", text):
                 val = text
-            if val and "://" not in val and not re.match(r"^[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}(:\d+)?(/|$)|^\d+\.\d+\.\d+\.\d+", val):
+            if (
+                val
+                and "://" not in val
+                and not re.match(r"^[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}(:\d+)?(/|$)|^\d+\.\d+\.\d+\.\d+", val)
+            ):
                 val = None  # `-i ./src/in.css` (tailwind) or `-i file` is a file, not an index host
             if val:
                 h = host_of(val if "://" in val else "https://" + val)
@@ -853,24 +1226,37 @@ class _Walker:
         """Commands that wipe disks, clear logs or history, stop the machine, or hand out capabilities."""
         words = " ".join(self.sub(a).text.lower() for a in args)
         why = ""
-        disk = (cmd.startswith("mkfs") or cmd in ("wipefs", "diskpart", "format-volume", "clear-disk", "initialize-disk")
-                or (cmd in ("fdisk", "sfdisk", "parted") and "-l" not in flags) or (cmd == "cipher" and ("/w" in words or "-w" in words))
-                or (cmd == "vssadmin" and "delete" in words) or (cmd == "diskutil" and re.search(r"erase|partition", words)))
+        disk = (
+            cmd.startswith("mkfs")
+            or cmd in ("wipefs", "diskpart", "format-volume", "clear-disk", "initialize-disk")
+            or (cmd in ("fdisk", "sfdisk", "parted") and "-l" not in flags)
+            or (cmd == "cipher" and ("/w" in words or "-w" in words))
+            or (cmd == "vssadmin" and "delete" in words)
+            or (cmd == "diskutil" and re.search(r"erase|partition", words))
+        )
         if disk:
             why = f"{cmd} can wipe or repartition a disk"
         elif cmd == "format" and any(re.fullmatch(r"[a-z]:", self.sub(t).text.lower()) for t in pos):
             why = "format erases a drive"
-        elif cmd in ("shutdown", "reboot", "halt", "poweroff", "stop-computer", "restart-computer") and not (cmd == "shutdown" and "-c" in flags):
+        elif cmd in ("shutdown", "reboot", "halt", "poweroff", "stop-computer", "restart-computer") and not (
+            cmd == "shutdown" and "-c" in flags
+        ):
             why = f"{cmd} stops or restarts the machine"
         elif cmd == "kill" and re.search(r"(^|\s)-1(\s|$)", words):
             why = "kill -1 signals every process"
         elif cmd == "history" and ("-c" in flags or "-w" in flags):
             why = "shell history is cleared"
-        elif cmd in ("clear-eventlog", "remove-eventlog", "clear-history") or (cmd == "wevtutil" and re.search(r"\b(cl|clear-log)\b", words)) or (cmd == "auditpol" and "clear" in words):
+        elif (
+            cmd in ("clear-eventlog", "remove-eventlog", "clear-history")
+            or (cmd == "wevtutil" and re.search(r"\b(cl|clear-log)\b", words))
+            or (cmd == "auditpol" and "clear" in words)
+        ):
             why = "event logs or history are cleared"
         elif cmd == "setcap" and "cap_" in words:
             why = "setcap grants file capabilities"
-        elif cmd in ("pip", "pip3", "pipx", "uv", "npm", "claude") and re.search(r"\b(uninstall|remove|disable)\b[^\n;|&]*jev", words):
+        elif cmd in ("pip", "pip3", "pipx", "uv", "npm", "claude") and re.search(
+            r"\b(uninstall|remove|disable)\b[^\n;|&]*jev", words
+        ):
             why = "uninstalls or disables a jev tool (the monitor itself)"
         else:
             return False
@@ -887,21 +1273,38 @@ class _Walker:
         elif cmd == "schtasks" and any(a.text.lower().startswith(("/create", "/change", "/run")) for a in args):
             self.a.persist.append("schtasks creates or changes a scheduled task")
         elif cmd in ("reg", "reg.exe") and args and args[0].text.lower() in ("add", "import", "copy"):
-            if re.search(r"\\(run|runonce|runservices|winlogon|services|image file execution options|environment)\b|\\policies\\", words):
+            if re.search(
+                r"\\(run|runonce|runservices|winlogon|services|image file execution options|environment)\b|\\policies\\",
+                words,
+            ):
                 self.a.persist.append("reg adds a startup/service registry value")
         elif cmd == "sc" and args and args[0].text.lower() in ("create", "config"):
             self.a.persist.append("sc creates or reconfigures a Windows service")
-        elif cmd in ("register-scheduledtask", "new-scheduledtask", "new-service", "set-service", "register-wmievent", "register-objectevent"):
+        elif cmd in (
+            "register-scheduledtask",
+            "new-scheduledtask",
+            "new-service",
+            "set-service",
+            "register-wmievent",
+            "register-objectevent",
+        ):
             self.a.persist.append(f"{cmd} creates something that runs later")
-        elif cmd in ("set-itemproperty", "new-itemproperty", "set-itemproperty") and re.search(r"\\(run|runonce|winlogon|services)\b", words):
+        elif cmd in ("set-itemproperty", "new-itemproperty", "set-itemproperty") and re.search(
+            r"\\(run|runonce|winlogon|services)\b", words
+        ):
             self.a.persist.append(f"{cmd} writes a startup registry value")
-        elif cmd == "systemctl" and any(a.text.lower() in ("enable", "link", "mask", "edit", "daemon-reload") for a in args):
+        elif cmd == "systemctl" and any(
+            a.text.lower() in ("enable", "link", "mask", "edit", "daemon-reload") for a in args
+        ):
             self.a.persist.append("systemctl enables or changes a unit")
         elif cmd == "launchctl" and any(a.text.lower() in ("load", "bootstrap", "submit", "enable") for a in args):
             self.a.persist.append("launchctl loads a launch agent/daemon")
         elif cmd in ("at", "batch") and args:
             self.a.persist.append("at schedules a job")
-        elif cmd == "wmic" and re.search(r"\b(process call create|startup|__eventfilter|__eventconsumer|__filtertoconsumerbinding|subscription|call create)\b", words):
+        elif cmd == "wmic" and re.search(
+            r"\b(process call create|startup|__eventfilter|__eventconsumer|__filtertoconsumerbinding|subscription|call create)\b",
+            words,
+        ):
             self.a.persist.append("wmic starts a process or edits startup entries")
         else:
             return False
@@ -937,7 +1340,11 @@ class _Walker:
         texts = [self.sub(a).text for a in args]
         for i, t in enumerate(texts):
             low = t.lower()
-            if low in ("--privileged", "--pid=host", "--userns=host", "--ipc=host") or low.startswith("--cap-add=sys_admin") or (low == "--cap-add" and i + 1 < len(texts) and texts[i + 1].lower() in ("sys_admin", "all")):
+            if (
+                low in ("--privileged", "--pid=host", "--userns=host", "--ipc=host")
+                or low.startswith("--cap-add=sys_admin")
+                or (low == "--cap-add" and i + 1 < len(texts) and texts[i + 1].lower() in ("sys_admin", "all"))
+            ):
                 self.a.persist.append(f"container started with {t} (host-level access)")
             vol = None
             if t in ("-v", "--volume", "--mount") and i + 1 < len(texts):
@@ -947,18 +1354,30 @@ class _Walker:
             elif t.startswith("-v") and len(t) > 2 and t[2] in "/~":
                 vol = t[2:]
             if vol:
-                src = vol.split(",")[0].removeprefix("type=bind").split(":")[0] if "source=" not in vol else re.search(r"source=([^,]+)", vol).group(1)  # type: ignore[union-attr]
+                src = (
+                    vol.split(",")[0].removeprefix("type=bind").split(":")[0]
+                    if "source=" not in vol
+                    else (re.search(r"source=([^,]+)", vol) or re.search(r"(.*)", vol)).group(1)  # type: ignore[union-attr]
+                )
                 src = src.removeprefix("src=")
-                if re.fullmatch(r"/|~|\$HOME|\$\{HOME\}|%USERPROFILE%|[A-Za-z]:[\\/]?", src) or re.match(r"^(/etc|/root|/var/run|/run/|/proc|/sys|/usr|~/\.ssh|~/\.aws|\$HOME/\.ssh|\$HOME/\.aws)", src) or "docker.sock" in src:
+                if (
+                    re.fullmatch(r"/|~|\$HOME|\$\{HOME\}|%USERPROFILE%|[A-Za-z]:[\\/]?", src)
+                    or re.match(
+                        r"^(/etc|/root|/var/run|/run/|/proc|/sys|/usr|~/\.ssh|~/\.aws|\$HOME/\.ssh|\$HOME/\.aws)", src
+                    )
+                    or "docker.sock" in src
+                ):
                     self.a.persist.append(f"container mounts {src} from the host")
 
     def _shell_c(self, cmd: str, args: list[Tok]) -> None:
         texts = [a for a in args]
         for idx, a in enumerate(texts):
             low = a.text.lower()
-            if low in ("-c", "-command", "/c", "/k", "-lc", "-ic", "-ec", "-cl") or (low.startswith("-") and low.endswith("c") and len(low) <= 4 and cmd in _SHELLS):
+            if low in ("-c", "-command", "/c", "/k", "-lc", "-ic", "-ec", "-cl") or (
+                low.startswith("-") and low.endswith("c") and len(low) <= 4 and cmd in _SHELLS
+            ):
                 if idx + 1 < len(texts):
-                    code = texts[idx + 1:]
+                    code = texts[idx + 1 :]
                     if "{}" in code[0].text or "<xargs>" in code[0].text:
                         self.a.opaque.append(f"{cmd} -c script receives arguments from find/xargs")
                     elif any(t.dyn for t in code[:1]) and re.search(r"\$\(|`|<\(", code[0].text):
@@ -978,9 +1397,19 @@ class _Walker:
                 break
 
     def _copy_like(self, cmd: str, args: list[Tok], pos: list[Tok]) -> None:
-        if self.ps and cmd in ("copy-item", "move-item", "rename-item", "cpi", "mi", "rni", "copy", "move", "ren", "cp", "mv") and any(a.text.startswith("-") and a.text.lower().rstrip(":") in _PS_PATH_PARAMS | {"-name", "-newname"} for a in args):
+        if (
+            self.ps
+            and cmd in ("copy-item", "move-item", "rename-item", "cpi", "mi", "rni", "copy", "move", "ren", "cp", "mv")
+            and any(
+                a.text.startswith("-") and a.text.lower().rstrip(":") in _PS_PATH_PARAMS | {"-name", "-newname"}
+                for a in args
+            )
+        ):
             named = self._ps_named_map(args)
-            src, dst = named.get("-path") or named.get("-literalpath"), named.get("-destination") or named.get("-newname") or named.get("-name")
+            src, dst = (
+                named.get("-path") or named.get("-literalpath"),
+                named.get("-destination") or named.get("-newname") or named.get("-name"),
+            )
             if dst is None and len(pos) >= 1:
                 dst = pos[-1]
             if src is None and pos:
@@ -999,7 +1428,14 @@ class _Walker:
         srcs = [p for p in pos if p is not tdir]
         if tdir is not None:
             for s in srcs:
-                self.target(Tok(posixpath.join(self.sub(tdir).text, posixpath.basename(self.sub(s).text.replace("\\", "/"))), s.dyn or tdir.dyn), "write", cmd)
+                self.target(
+                    Tok(
+                        posixpath.join(self.sub(tdir).text, posixpath.basename(self.sub(s).text.replace("\\", "/"))),
+                        s.dyn or tdir.dyn,
+                    ),
+                    "write",
+                    cmd,
+                )
             return
         if len(pos) < 2:
             return
@@ -1016,9 +1452,20 @@ class _Walker:
         for s in pos[:-1]:
             st = self.sub(s)
             # copying INTO a folder writes folder/<name>; only guessed when the destination is (or looks like) a folder
-            into_dir = dst.text.endswith(("/", "\\")) or len(pos) > 2 or os.path.isdir(d if os.path.isabs(d) else os.path.join(self.cwd or ".", d))
+            into_dir = (
+                dst.text.endswith(("/", "\\"))
+                or len(pos) > 2
+                or os.path.isdir(d if os.path.isabs(d) else os.path.join(self.cwd or ".", d))
+            )
             if not st.dyn and into_dir:
-                self.a.ops.append(ShellOp("write", posixpath.join(d.replace("\\", "/"), posixpath.basename(st.text.replace("\\", "/"))), self.cwd, cmd)) if not dst.dyn else None
+                self.a.ops.append(
+                    ShellOp(
+                        "write",
+                        posixpath.join(d.replace("\\", "/"), posixpath.basename(st.text.replace("\\", "/"))),
+                        self.cwd,
+                        cmd,
+                    )
+                ) if not dst.dyn else None
             if cmd in ("mv", "move-item", "mi", "move", "ren"):
                 self.target(s, "delete", cmd)
 
@@ -1057,7 +1504,20 @@ class _Walker:
                     skip = False
                     continue
                 if a.text.startswith("-"):
-                    skip = a.text.lower() in ("-value", "-encoding", "-itemtype", "-name", "-width", "-stream", "-delimiter", "-inputobject") and ":" not in a.text
+                    skip = (
+                        a.text.lower()
+                        in (
+                            "-value",
+                            "-encoding",
+                            "-itemtype",
+                            "-name",
+                            "-width",
+                            "-stream",
+                            "-delimiter",
+                            "-inputobject",
+                        )
+                        and ":" not in a.text
+                    )
                     continue
                 pos.append(a)
             dst = pos[0] if pos else None
@@ -1072,11 +1532,19 @@ class _Walker:
             roots.append(a)
         texts = [a.text for a in args]
         if "-delete" in texts:
-            names = [texts[i + 1] for i, t in enumerate(texts) if t in ("-name", "-iname", "-path", "-ipath", "-wholename") and i + 1 < len(texts)]
+            names = [
+                texts[i + 1]
+                for i, t in enumerate(texts)
+                if t in ("-name", "-iname", "-path", "-ipath", "-wholename") and i + 1 < len(texts)
+            ]
             if names:
                 for r in roots or [Tok(".")]:
                     for nm in names:
-                        self.target(Tok(posixpath.join(self.sub(r).text, nm.lstrip("./")), r.dyn, True), "delete", "find -delete")
+                        self.target(
+                            Tok(posixpath.join(self.sub(r).text, nm.lstrip("./")), r.dyn, True),
+                            "delete",
+                            "find -delete",
+                        )
             else:
                 for r in roots or [Tok(".")]:
                     self.target(r, "delete", "find -delete", recursive=True)
@@ -1133,7 +1601,7 @@ class _Walker:
             if sub in ("checkout", "restore", "rm", "mv", "mergetool"):
                 if "--" in [t.text for t in rest]:
                     idx = [t.text for t in rest].index("--")
-                    files = rest[idx + 1:]
+                    files = rest[idx + 1 :]
                 elif sub == "restore":
                     files = restpos
                 elif sub == "checkout":
@@ -1164,7 +1632,9 @@ class _Walker:
                 for t in rest:
                     h = host_of(self.sub(t).text) if ("://" in t.text or "@" in t.text) else None
                     if h:
-                        self.a.ops.append(ShellOp("net", h, self.cwd, f"git {sub}", upload=sub == "push" or remote_target))
+                        self.a.ops.append(
+                            ShellOp("net", h, self.cwd, f"git {sub}", upload=sub == "push" or remote_target)
+                        )
             elif sub in ("init", "clone") and any(t.text.startswith("--template") for t in rest):
                 self.a.persist.append("git is given a template folder, which can install hooks that run later")
             elif sub in ("apply", "am"):
@@ -1178,7 +1648,11 @@ class _Walker:
         """`git config <key> <value>` or `git -c key=value`: keys that make git run a program or switch off checks."""
         if re.search(r"core\.hookspath", joined, re.IGNORECASE):
             self.a.mentions.append("git-hooks-path")
-        if re.search(r"(^|\s)!|core\.(sshcommand|pager|editor|fsmonitor|askpass)\b|diff\.external|credential\.helper[\s=]+!|protocol\.ext\.allow", joined, re.IGNORECASE):
+        if re.search(
+            r"(^|\s)!|core\.(sshcommand|pager|editor|fsmonitor|askpass)\b|diff\.external|credential\.helper[\s=]+!|protocol\.ext\.allow",
+            joined,
+            re.IGNORECASE,
+        ):
             self.a.persist.append("git config sets a command that git will run later")
         if re.search(r"http\.sslverify\s*[ =]\s*false", joined, re.IGNORECASE):
             self.a.persist.append("git TLS verification is switched off")
@@ -1207,7 +1681,17 @@ class _Walker:
                     self.a.opaque.append(f"{cmd} inline code is computed")
                 else:
                     code_args.append(args[i + 1].text)
-        if seg is not None and seg.heredoc and any(t.text == "-" for t in args) or (seg is not None and seg.heredoc and not code_args and not [a for a in args if not a.text.startswith("-")]):
+        if (
+            seg is not None
+            and seg.heredoc
+            and any(t.text == "-" for t in args)
+            or (
+                seg is not None
+                and seg.heredoc
+                and not code_args
+                and not [a for a in args if not a.text.startswith("-")]
+            )
+        ):
             code_args.append(seg.heredoc or "")
         for code in code_args:
             self.scan_code(code, cmd)
@@ -1224,17 +1708,33 @@ class _Walker:
         for m in _URL.finditer(code):
             self.a.ops.append(ShellOp("net", m.group("host").strip("[]").lower(), self.cwd, f"{via} inline code"))
         # string literals are candidate paths: an inline script that opens ~/.ssh/id_rsa or .env is a secret touch
-        for lit in re.findall(r"""['"]([^'"
-]{1,120})['"]""", code):
+        for lit in re.findall(
+            r"""['"]([^'"
+]{1,120})['"]""",
+            code,
+        ):
             if len(self.a.words) < MAX_WORDS and "://" not in lit:
                 self.a.words.append(lit)
-        if re.search(r"\b(?:exec|eval|compile)\s*\(|__import__\(|base64\.b64decode|subprocess|os\.system|child_process", code):
+        if re.search(
+            r"\b(?:exec|eval|compile)\s*\(|__import__\(|base64\.b64decode|subprocess|os\.system|child_process", code
+        ):
             self.a.mentions.append("inline-code-exec")
-        if re.search(r"(?:\bos\.system|\bsubprocess\.\w+|\bpopen|\bexecSync|\bspawnSync)\s*\([^\n]{0,160}?(?:b64decode|atob|fromhex|unhexlify|FromBase64|Buffer\.from|codecs\.decode)", code, re.DOTALL):
+        if re.search(
+            r"(?:\bos\.system|\bsubprocess\.\w+|\bpopen|\bexecSync|\bspawnSync)\s*\([^\n]{0,160}?(?:b64decode|atob|fromhex|unhexlify|FromBase64|Buffer\.from|codecs\.decode)",
+            code,
+            re.DOTALL,
+        ):
             self.a.pipe_exec.append(f"{via} inline code runs decoded text as a command")
-        if re.search(r"(?:\bexec|\beval|\bFunction)\b\s*\(?.{0,120}?(?:b64decode|atob|fromhex|unhexlify|decompress|decode_base64|from_base64|base64_decode|FromBase64|Buffer\.from)", code, re.DOTALL):
+        if re.search(
+            r"(?:\bexec|\beval|\bFunction)\b\s*\(?.{0,120}?(?:b64decode|atob|fromhex|unhexlify|decompress|decode_base64|from_base64|base64_decode|FromBase64|Buffer\.from)",
+            code,
+            re.DOTALL,
+        ):
             self.a.pipe_exec.append(f"{via} inline code executes decoded text")
-        if re.search(r"\b(?:system|popen|exec|execSync|spawn|spawnSync|shell_exec|passthru|run|call|check_output|Popen)\s*\(|child_process", code):
+        if re.search(
+            r"\b(?:system|popen|exec|execSync|spawn|spawnSync|shell_exec|passthru|run|call|check_output|Popen)\s*\(|child_process",
+            code,
+        ):
             for lit in re.findall(r"""['"]([^'"\n]{6,300})['"]""", code)[:6]:
                 if " " in lit and "://" not in lit.split(" ")[0]:
                     self.recurse(lit, False)  # a string handed to the system shell: analyse it as a command line
@@ -1248,9 +1748,31 @@ class _Walker:
         while i < len(args):
             t = args[i].text
             low = t.lower()
-            if low in ("-d", "--data", "--data-binary", "--data-raw", "--data-urlencode", "-f", "--form", "-t", "--upload-file", "--json", "--post-data", "--post-file", "--body-data", "--body-file", "-body", "-infile", "--data-ascii") or low.startswith(("--data", "--form", "--post-")):
+            if low in (
+                "-d",
+                "--data",
+                "--data-binary",
+                "--data-raw",
+                "--data-urlencode",
+                "-f",
+                "--form",
+                "-t",
+                "--upload-file",
+                "--json",
+                "--post-data",
+                "--post-file",
+                "--body-data",
+                "--body-file",
+                "-body",
+                "-infile",
+                "--data-ascii",
+            ) or low.startswith(("--data", "--form", "--post-")):
                 upload = True
-            if low in ("-x", "--request", "-method", "--method") and i + 1 < len(args) and args[i + 1].text.upper() in ("POST", "PUT", "PATCH", "DELETE"):
+            if (
+                low in ("-x", "--request", "-method", "--method")
+                and i + 1 < len(args)
+                and args[i + 1].text.upper() in ("POST", "PUT", "PATCH", "DELETE")
+            ):
                 upload = True
             if (low in ("-o", "--output", "-outfile", "-destination", "-O") or t == "-O") and i + 1 < len(args):
                 outs.append(args[i + 1])
@@ -1258,8 +1780,46 @@ class _Walker:
                 outs.append(Tok(t.split("=", 1)[1]))
             if low in ("-p", "--directory-prefix") and cmd == "wget" and i + 1 < len(args):
                 outs.append(args[i + 1])
-            is_output_value = i > 0 and (args[i - 1].text.lower() in ("-o", "--output", "-outfile", "-destination", "-p", "--directory-prefix", "-d", "--data", "--data-binary", "-t", "--upload-file", "-x", "--request", "-h", "--header", "-u", "--user", "-a", "--user-agent", "-e", "--referer", "-b", "--cookie", "-method", "-headers", "-body", "-infile", "-useragent", "-contenttype") or args[i - 1].text == "-O")
-            if not t.startswith("-") and not is_output_value and (("://" in t) or _HOSTLIKE.match(t.split("/")[0]) or t.startswith("localhost")):
+            is_output_value = i > 0 and (
+                args[i - 1].text.lower()
+                in (
+                    "-o",
+                    "--output",
+                    "-outfile",
+                    "-destination",
+                    "-p",
+                    "--directory-prefix",
+                    "-d",
+                    "--data",
+                    "--data-binary",
+                    "-t",
+                    "--upload-file",
+                    "-x",
+                    "--request",
+                    "-h",
+                    "--header",
+                    "-u",
+                    "--user",
+                    "-a",
+                    "--user-agent",
+                    "-e",
+                    "--referer",
+                    "-b",
+                    "--cookie",
+                    "-method",
+                    "-headers",
+                    "-body",
+                    "-infile",
+                    "-useragent",
+                    "-contenttype",
+                )
+                or args[i - 1].text == "-O"
+            )
+            if (
+                not t.startswith("-")
+                and not is_output_value
+                and (("://" in t) or _HOSTLIKE.match(t.split("/")[0]) or t.startswith("localhost"))
+            ):
                 urls.append(args[i])
             i += 1
         for u in urls:
@@ -1278,15 +1838,50 @@ class _Walker:
                 self.downloaded.add(name)
 
     def _raw_net(self, cmd: str, args: list[Tok], pos: list[Tok]) -> None:
-        if cmd in ("ssh", "scp", "sftp", "mosh", "rsync"):  # option values (-o StrictHostKeyChecking=no, -i key, -p 22) are not hosts
-            skip = {i + 1 for i, a in enumerate(args) if a.text in ("-o", "-i", "-p", "-P", "-l", "-F", "-J", "-b", "-c", "-E", "-e", "-m", "-S", "-W", "-B", "-D", "-L", "-R", "-w")}
+        if cmd in (
+            "ssh",
+            "scp",
+            "sftp",
+            "mosh",
+            "rsync",
+        ):  # option values (-o StrictHostKeyChecking=no, -i key, -p 22) are not hosts
+            skip = {
+                i + 1
+                for i, a in enumerate(args)
+                if a.text
+                in (
+                    "-o",
+                    "-i",
+                    "-p",
+                    "-P",
+                    "-l",
+                    "-F",
+                    "-J",
+                    "-b",
+                    "-c",
+                    "-E",
+                    "-e",
+                    "-m",
+                    "-S",
+                    "-W",
+                    "-B",
+                    "-D",
+                    "-L",
+                    "-R",
+                    "-w",
+                )
+            }
             pos = [a for i, a in enumerate(args) if i not in skip and (not a.text.startswith("-") or a.text == "-")]
         hosts = []
         for t in pos:
             h = host_of(self.sub(t).text)
             if h:
                 hosts.append(h)
-        if cmd in ("nc", "ncat", "netcat", "socat") and any(a.text in ("-l", "-lp", "-lvp", "-k") or (a.text.startswith("-") and "l" in a.text[1:] and not a.text.startswith("--")) for a in args):
+        if cmd in ("nc", "ncat", "netcat", "socat") and any(
+            a.text in ("-l", "-lp", "-lvp", "-k")
+            or (a.text.startswith("-") and "l" in a.text[1:] and not a.text.startswith("--"))
+            for a in args
+        ):
             self.a.ops.append(ShellOp("listen", "0.0.0.0", self.cwd, cmd))
             return
         if cmd in ("nc", "ncat", "netcat", "telnet", "tnc", "test-netconnection") and pos and not hosts:
@@ -1300,7 +1895,15 @@ class _Walker:
                 hosts.append(h)
         tunnel = cmd in ("ssh", "mosh") and any(a.text[:2] in ("-R", "-L", "-D", "-w") for a in args)
         for h in hosts:
-            self.a.ops.append(ShellOp("net", h, self.cwd, cmd, upload=tunnel or cmd in ("scp", "rsync", "ftp", "tftp", "nc", "ncat", "netcat", "socat")))
+            self.a.ops.append(
+                ShellOp(
+                    "net",
+                    h,
+                    self.cwd,
+                    cmd,
+                    upload=tunnel or cmd in ("scp", "rsync", "ftp", "tftp", "nc", "ncat", "netcat", "socat"),
+                )
+            )
 
 
 def _join(cwd: str, rel: str) -> str:
@@ -1319,7 +1922,9 @@ def analyze(command: str, cwd: str, powershell: bool = False) -> Analysis:
         w.a.opaque.append(f"command is {len(command)} characters, too large to analyse")
         return w.a
     w.walk(command)
-    if re.search(r"(?i)(reg(\.exe)?\s+add|set-itemproperty|new-itemproperty)[^\n;|]*\\(run|runonce|winlogon|services)\b", command):
+    if re.search(
+        r"(?i)(reg(\.exe)?\s+add|set-itemproperty|new-itemproperty)[^\n;|]*\\(run|runonce|winlogon|services)\b", command
+    ):
         w.a.persist.append("a startup/service registry value is written")
     # PowerShell-only constructs inside a posix-looking line and vice versa: a regex pass for .NET calls
     if powershell or "IO.File" in command or "::" in command:
@@ -1327,7 +1932,10 @@ def analyze(command: str, cwd: str, powershell: bool = False) -> Analysis:
             for m in rx.finditer(command):
                 w.target(Tok(m.group("p")), "write", ".NET file call")
     low = command.lower()
-    if re.search(r"\b(iex|invoke-expression)\b", low) and re.search(r"downloadstring|downloadfile|\biwr\b|invoke-webrequest|\birm\b|invoke-restmethod|\bcurl\b|\bwget\b|frombase64string", low):
+    if re.search(r"\b(iex|invoke-expression)\b", low) and re.search(
+        r"downloadstring|downloadfile|\biwr\b|invoke-webrequest|\birm\b|invoke-restmethod|\bcurl\b|\bwget\b|frombase64string",
+        low,
+    ):
         w.a.pipe_exec.append("PowerShell executes downloaded or decoded text (iex)")
     if re.search(r"downloadstring|downloadfile|downloaddata|webclient", low):
         for m in _URL.finditer(command):

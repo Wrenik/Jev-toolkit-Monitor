@@ -23,19 +23,32 @@ MAX_CHARS = 60_000
 VSCODE_RISK = re.compile(
     r"(?i)terminal\.integrated\.(?:profiles|defaultProfile|shell|automation|env|inheritEnv)|task\.allowAutomaticTasks|"
     r"\"[\w.-]*\.(?:path|exe|executable|binary|command|args)\"\s*:|\.(?:sh|ps1|bat|cmd|exe)\b|"
-    r"\b(?:curl|wget|iex|irm|iwr|powershell|bash\s+-c|cmd\s+/c)\b")
+    r"\b(?:curl|wget|iex|irm|iwr|powershell|bash\s+-c|cmd\s+/c)\b"
+)
 COMPOSE_RISK = re.compile(
     r"(?im)^\s*(?:privileged:\s*true|pid:\s*[\"']?host|network_mode:\s*[\"']?host|ipc:\s*[\"']?host|-\s*[\"']?(?:/|~|\$HOME)[\"']?:[\"']?/|"
-    r"-\s*[\"']?/var/run/docker\.sock|-\s*[\"']?(?:~|\$HOME|%USERPROFILE%)/\.(?:ssh|aws|kube|gnupg)|cap_add:.*sys_admin|-\s*sys_admin)")
+    r"-\s*[\"']?/var/run/docker\.sock|-\s*[\"']?(?:~|\$HOME|%USERPROFILE%)/\.(?:ssh|aws|kube|gnupg)|cap_add:.*sys_admin|-\s*sys_admin)"
+)
 
-_MCP_OK_PACKAGES = ("@modelcontextprotocol/", "@playwright/mcp", "@upstash/context7-mcp", "mcp-server-git", "mcp-server-fetch", "mcp-server-time", "@azure/mcp", "@github/mcp-server")
+_MCP_OK_PACKAGES = (
+    "@modelcontextprotocol/",
+    "@playwright/mcp",
+    "@upstash/context7-mcp",
+    "mcp-server-git",
+    "mcp-server-fetch",
+    "mcp-server-time",
+    "@azure/mcp",
+    "@github/mcp-server",
+)
 _MCP_FILES = {".mcp.json", "mcp.json", "claude_desktop_config.json", "mcp_config.json", ".claude.json"}
 
 
 def classify(path: str) -> str | None:
     p = path.replace("\\", "/")
     base = p.rsplit("/", 1)[-1]
-    if catalog.CI_FILES.search(p) or re.search(r"(?i)(?:^|/)(?:\.travis\.ya?ml|\.drone\.ya?ml|\.github/actions/[^/]+/action\.ya?ml)$", p):
+    if catalog.CI_FILES.search(p) or re.search(
+        r"(?i)(?:^|/)(?:\.travis\.ya?ml|\.drone\.ya?ml|\.github/actions/[^/]+/action\.ya?ml)$", p
+    ):
         return "ci"
     if base == "package.json":
         return "package"
@@ -58,7 +71,11 @@ def _flatten(value: Any) -> list[str]:
     if isinstance(value, str):
         return [value]
     if isinstance(value, list):
-        return [" ".join(x for x in value if isinstance(x, str))] if all(isinstance(x, str) for x in value) else [s for x in value for s in _flatten(x)]
+        return (
+            [" ".join(x for x in value if isinstance(x, str))]
+            if all(isinstance(x, str) for x in value)
+            else [s for x in value for s in _flatten(x)]
+        )
     if isinstance(value, dict):
         return [s for x in value.values() for s in _flatten(x)]
     return []
@@ -122,11 +139,22 @@ def mcp_servers_benign(text: str, host_ok) -> bool:
             if not h or not host_ok(h):
                 return False
             continue
-        cmd = str(cfg.get("command", "")).replace("\\", "/").rsplit("/", 1)[-1].lower().removesuffix(".exe").removesuffix(".cmd")
+        cmd = (
+            str(cfg.get("command", ""))
+            .replace("\\", "/")
+            .rsplit("/", 1)[-1]
+            .lower()
+            .removesuffix(".exe")
+            .removesuffix(".cmd")
+        )
         args = [str(x) for x in cfg.get("args", [])] if isinstance(cfg.get("args", []), list) else None
         if cmd not in ("npx", "uvx", "bunx") or args is None:
             return False
         names = [x for x in args if not x.startswith("-")]
-        if not names or not names[0].startswith(_MCP_OK_PACKAGES) or any(x in ("-c", "-e", "--eval", "-p") for x in args):
+        if (
+            not names
+            or not names[0].startswith(_MCP_OK_PACKAGES)
+            or any(x in ("-c", "-e", "--eval", "-p") for x in args)
+        ):
             return False
     return True

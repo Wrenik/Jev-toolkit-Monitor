@@ -72,7 +72,7 @@ BENIGN = [
     ("Bash", "chmod 755 deploy.sh"),
     ("Bash", "chmod 644 README.md"),
     ("Bash", "go install golang.org/x/tools/gopls@latest"),
-    ("Bash", "curl -H \"Authorization: Bearer $GITHUB_TOKEN\" https://api.github.com/user"),
+    ("Bash", 'curl -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/user'),
     ("Bash", "curl -o notes.json https://api.github.com/repos/psf/requests && python -m json.tool notes.json"),
     ("Bash", "git config core.autocrlf false"),
     ("Bash", "rm -rf build/*.o"),
@@ -102,10 +102,19 @@ def test_a_path_of_absurd_length_is_not_resolved(run):
     assert any(f.rule == "opaque-path" for f in d.findings)
 
 
-@pytest.mark.parametrize("text", [
-    "echo 'a b' > out.txt; ls | wc -l && cat <<'EOF'\nbody\nEOF\n", "echo $(date) `id` <(ls)", "2>&1 ls", "cat <<-X\n\tx\n\tX\nls",
-    "echo \"a $(b \"c\") d\"", "echo 'unterminated", "a && b || c; d &", "echo \\$x \\\"q",
-])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "echo 'a b' > out.txt; ls | wc -l && cat <<'EOF'\nbody\nEOF\n",
+        "echo $(date) `id` <(ls)",
+        "2>&1 ls",
+        "cat <<-X\n\tx\n\tX\nls",
+        'echo "a $(b "c") d"',
+        "echo 'unterminated",
+        "a && b || c; d &",
+        'echo \\$x \\"q',
+    ],
+)
 def test_tokenizer_keeps_words_and_segments(text):
     segs = tokenize(text)
     assert segs and all(s.words or s.redirects or s.heredoc is not None for s in segs)

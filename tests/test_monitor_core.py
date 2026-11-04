@@ -84,6 +84,7 @@ def test_symlink_resolves(tmp_path):
 def test_glob_anchoring_and_depth():
     def gm(p, pat):
         return paths.glob_match(p, pat, win=False, env={"HOME": "/home/u"})
+
     assert gm("/work/proj/CLAUDE.md", "CLAUDE.md")
     assert gm("/work/proj/sub/deep/CLAUDE.md", "CLAUDE.md")
     assert gm("/work/proj/.claude/hooks/x.sh", ".claude/**")
@@ -108,7 +109,9 @@ def test_defaults_are_monitor_mode_and_fail_closed_for_sensitive():
 
 def test_per_class_override(tmp_path):
     f = tmp_path / "p.toml"
-    f.write_text('mode = "monitor"\n[classes.shell]\nmode = "enforce"\nfail = "closed"\n[classes.read]\nfail = "open"\n')
+    f.write_text(
+        'mode = "monitor"\n[classes.shell]\nmode = "enforce"\nfail = "closed"\n[classes.read]\nfail = "open"\n'
+    )
     p = load_policy(f)
     assert p.class_mode("shell", "monitor") == "enforce"
     assert p.class_mode("write", "monitor") == "monitor"
@@ -139,7 +142,13 @@ def test_missing_policy_file_is_an_error(tmp_path):
 
 
 def test_policy_from_dict_overrides_values():
-    p = policy_from_dict({"network": {"allow_hosts": ["Example.COM"]}, "canary": {"tokens": ["CANARY-1"]}, "protected": {"dev_mode": True}})
+    p = policy_from_dict(
+        {
+            "network": {"allow_hosts": ["Example.COM"]},
+            "canary": {"tokens": ["CANARY-1"]},
+            "protected": {"dev_mode": True},
+        }
+    )
     assert p.allow_hosts == ["example.com"] and p.canary_tokens == ["CANARY-1"] and p.dev_mode
 
 

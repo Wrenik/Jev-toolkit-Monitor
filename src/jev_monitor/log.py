@@ -33,7 +33,13 @@ class MonitorLog:
                 fh.write(line + "\n")
 
     def decision(self, call: Call, d: Decision) -> None:
-        summary = call.input.get("command") or call.input.get("file_path") or call.input.get("url") or call.input.get("path") or ""
+        summary = (
+            call.input.get("command")
+            or call.input.get("file_path")
+            or call.input.get("url")
+            or call.input.get("path")
+            or ""
+        )
         blob = json.dumps(call.input, sort_keys=True, default=str)
         self._append(
             {
@@ -81,13 +87,19 @@ def would_block_report(records: list[dict[str, Any]]) -> str:
     decisions = [r for r in records if r.get("event") == "decision"]
     flagged = [r for r in decisions if r.get("would") in ("ask", "block", "kill")]
     warned = [r for r in decisions if r.get("would") == "warn"]
-    lines = [(f"{len(decisions)} decisions: {len(flagged)} would be held or blocked, {len(warned)} warned, "
-              f"{len(decisions) - len(flagged) - len(warned)} passed")]
+    lines = [
+        (
+            f"{len(decisions)} decisions: {len(flagged)} would be held or blocked, {len(warned)} warned, "
+            f"{len(decisions) - len(flagged) - len(warned)} passed"
+        )
+    ]
     by_rule = Counter(rule for r in flagged for rule in r.get("rules", []))
     if by_rule:
         lines.append("would-block by rule: " + ", ".join(f"{k} x{v}" for k, v in by_rule.most_common()))
     for r in flagged[-20:]:
-        lines.append(f"  {r.get('ts', '')[:19]} {r.get('tool')}: {r.get('would')} [{','.join(r.get('rules', []))}] {r.get('summary', '')}")
+        lines.append(
+            f"  {r.get('ts', '')[:19]} {r.get('tool')}: {r.get('would')} [{','.join(r.get('rules', []))}] {r.get('summary', '')}"
+        )
     if not flagged:
         lines.append("nothing would have been blocked.")
     return "\n".join(lines)

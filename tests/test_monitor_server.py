@@ -31,7 +31,12 @@ def call(port, path, body=None, headers=None, host=None, method=None):
     h = {HEADER: "1", "Content-Type": "application/json", **(headers or {})}
     if host:
         h["Host"] = host
-    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=json.dumps(body).encode() if body is not None else None, headers=h, method=method)
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}{path}",
+        data=json.dumps(body).encode() if body is not None else None,
+        headers=h,
+        method=method,
+    )
     try:
         with urllib.request.urlopen(req, timeout=5) as r:
             return r.status, json.loads(r.read())
@@ -50,7 +55,17 @@ def test_hardening(server):
 
 def test_check_roundtrip_and_fields(server, tmp_path):
     port, _, _ = server
-    code, d = call(port, "/check", {"tool": "Bash", "input": {"command": "echo x > CLAUDE.md"}, "cwd": str(tmp_path), "root": str(tmp_path), "session": "s"})
+    code, d = call(
+        port,
+        "/check",
+        {
+            "tool": "Bash",
+            "input": {"command": "echo x > CLAUDE.md"},
+            "cwd": str(tmp_path),
+            "root": str(tmp_path),
+            "session": "s",
+        },
+    )
     assert code == 200 and d["action"] == "warn" and d["would"] == "block" and "instruction-file-change" in d["rules"]
     assert call(port, "/check", {"tool": "Bash"})[1]["ok"] is False
     code, h = call(port, "/health")
@@ -61,7 +76,13 @@ def test_control_endpoints(server, tmp_path):
     port, m, _ = server
     assert call(port, "/mode", {"mode": "enforce"})[1]["mode"] == "enforce"
     assert call(port, "/mode", {"mode": "yolo"})[0] == 400
-    body = {"tool": "Bash", "input": {"command": "echo x > CLAUDE.md"}, "cwd": str(tmp_path), "root": str(tmp_path), "session": "s"}
+    body = {
+        "tool": "Bash",
+        "input": {"command": "echo x > CLAUDE.md"},
+        "cwd": str(tmp_path),
+        "root": str(tmp_path),
+        "session": "s",
+    }
     assert call(port, "/check", body)[1]["action"] == "ask" or call(port, "/check", body)[1]["action"] == "block"
     assert call(port, "/allow", {"session": "s"})[1]["ok"] is True
     assert call(port, "/check", body)[1]["action"] == "allow"
@@ -97,20 +118,33 @@ def hook(tmp_path, monkeypatch, payload, mode="enforce"):
 
 def test_classic_hook_deny_and_allow(tmp_path, monkeypatch):
     base = {"cwd": str(tmp_path), "session_id": "s"}
-    code, out, _err = hook(tmp_path, monkeypatch, {**base, "tool_name": "Bash", "tool_input": {"command": "echo x > CLAUDE.md"}})
+    code, out, _err = hook(
+        tmp_path, monkeypatch, {**base, "tool_name": "Bash", "tool_input": {"command": "echo x > CLAUDE.md"}}
+    )
     o = json.loads(out)
     assert code == 0 and o["hookSpecificOutput"]["permissionDecision"] == "deny"
     code, out, _ = hook(tmp_path, monkeypatch, {**base, "tool_name": "Bash", "tool_input": {"command": "git status"}})
     assert code == 0 and out == ""
-    code, out, _ = hook(tmp_path, monkeypatch, {**base, "tool_name": "Bash", "tool_input": {"command": "echo x > $UNSET/f"}})
+    code, out, _ = hook(
+        tmp_path, monkeypatch, {**base, "tool_name": "Bash", "tool_input": {"command": "echo x > $UNSET/f"}}
+    )
     assert json.loads(out)["hookSpecificOutput"]["permissionDecision"] == "ask"
 
 
 def test_classic_hook_monitor_mode_only_adds_context(tmp_path, monkeypatch):
     base = {"cwd": str(tmp_path), "session_id": "s"}
-    code, out, _ = hook(tmp_path, monkeypatch, {**base, "tool_name": "Bash", "tool_input": {"command": "echo x > CLAUDE.md"}}, mode="monitor")
+    code, out, _ = hook(
+        tmp_path,
+        monkeypatch,
+        {**base, "tool_name": "Bash", "tool_input": {"command": "echo x > CLAUDE.md"}},
+        mode="monitor",
+    )
     o = json.loads(out)
-    assert code == 0 and "permissionDecision" not in o["hookSpecificOutput"] and "would" in o["hookSpecificOutput"]["additionalContext"]
+    assert (
+        code == 0
+        and "permissionDecision" not in o["hookSpecificOutput"]
+        and "would" in o["hookSpecificOutput"]["additionalContext"]
+    )
 
 
 def test_classic_hook_garbage_input_fails_closed_only_when_enforcing(tmp_path, monkeypatch):

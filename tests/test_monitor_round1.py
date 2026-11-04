@@ -49,14 +49,34 @@ ATTACKS = [
     ("Write", {"file_path": "~/.ssh/authorized_keys", "content": "ssh-rsa A"}, "persistence-file"),
     ("Bash", {"command": f"reg add {RUN_KEY} /v x /d evil.exe"}, "persistence-command"),
     ("PowerShell", {"command": f"reg add {RUN_KEY} /v x /d evil.exe"}, "persistence-command"),
-    ("PowerShell", {"command": "Set-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' -Name x -Value evil.exe"}, "persistence-command"),
-    ("PowerShell", {"command": "New-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce' -Name x -Value evil.exe"}, "persistence-command"),
+    (
+        "PowerShell",
+        {
+            "command": "Set-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' -Name x -Value evil.exe"
+        },
+        "persistence-command",
+    ),
+    (
+        "PowerShell",
+        {
+            "command": "New-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce' -Name x -Value evil.exe"
+        },
+        "persistence-command",
+    ),
     ("Bash", {"command": "schtasks /create /tn x /tr evil.exe /sc minute"}, "persistence-command"),
     ("PowerShell", {"command": "Register-ScheduledTask -TaskName x -Action $a -Trigger $t"}, "persistence-command"),
     ("Bash", {"command": "sc create evil binPath= C:\\evil.exe"}, "persistence-command"),
     ("PowerShell", {"command": "New-Service -Name evil -BinaryPathName C:\\evil.exe"}, "persistence-command"),
-    ("Write", {"file_path": "C:/ProgramData/Microsoft/Windows/Start Menu/Programs/Startup/evil.bat", "content": "x"}, "persistence-file"),
-    ("WebFetch", {"url": "http://169.254.169.254/latest/meta-data/iam/security-credentials/", "prompt": "x"}, "ssrf-metadata"),
+    (
+        "Write",
+        {"file_path": "C:/ProgramData/Microsoft/Windows/Start Menu/Programs/Startup/evil.bat", "content": "x"},
+        "persistence-file",
+    ),
+    (
+        "WebFetch",
+        {"url": "http://169.254.169.254/latest/meta-data/iam/security-credentials/", "prompt": "x"},
+        "ssrf-metadata",
+    ),
     ("Bash", {"command": "curl -s http://169.254.169.254/latest/meta-data/"}, "ssrf-metadata"),
     ("WebFetch", {"url": "http://metadata.google.internal/computeMetadata/v1/", "prompt": "x"}, "ssrf-metadata"),
     ("Bash", {"command": "curl http://2852039166/latest/meta-data/"}, "ssrf-metadata"),
@@ -153,22 +173,49 @@ def test_absurdly_large_command_is_asked_about_not_analysed(mon):
     assert any(f.opaque for f in d.findings) and d.action == "ask"
 
 
-@pytest.mark.parametrize("cmd", [
-    "echo 'unterminated", 'echo "unterminated', "echo $(unterminated", "echo `unterminated", "cat <<EOF\nnever closed", "echo ((((((((((",
-    "echo \\", "a" + "$(" * 200, "$(" * 50 + ")" * 50, "'" * 1001, ">" * 500, "| " * 2000 + "cat", "echo " + "\x00\x01\x02\xff" * 100,
-    "echo " + "$(echo " * 60 + "x" + ")" * 60, "bash -c " + "'bash -c ' " * 40 + "x",
-])
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "echo 'unterminated",
+        'echo "unterminated',
+        "echo $(unterminated",
+        "echo `unterminated",
+        "cat <<EOF\nnever closed",
+        "echo ((((((((((",
+        "echo \\",
+        "a" + "$(" * 200,
+        "$(" * 50 + ")" * 50,
+        "'" * 1001,
+        ">" * 500,
+        "| " * 2000 + "cat",
+        "echo " + "\x00\x01\x02\xff" * 100,
+        "echo " + "$(echo " * 60 + "x" + ")" * 60,
+        "bash -c " + "'bash -c ' " * 40 + "x",
+    ],
+)
 def test_malformed_shell_never_crashes_or_hangs(mon, cmd):
     d = timed(mon, "Bash", command=cmd)
     assert d.failed is None and d.action in ("allow", "log", "warn", "ask", "block", "kill")
 
 
-@pytest.mark.parametrize("tool,inp", [
-    ("Bash", {"command": 12345}), ("Bash", {"command": None}), ("Bash", {"command": b"echo hi"}), ("Bash", {}), ("PowerShell", {"command": ["a"]}),
-    ("Write", {"file_path": 5, "content": "x"}), ("Write", {"file_path": "a\x00b", "content": "x"}), ("Edit", {"file_path": {"x": 1}}),
-    ("WebFetch", {"url": 7}), ("WebFetch", {"url": "http://[::1"}), ("WebFetch", {"url": "\xff\xfe"}), ("Read", {"file_path": "C:\\" + "a\\" * 5000}),
-    ("Grep", {"path": None}),
-])
+@pytest.mark.parametrize(
+    "tool,inp",
+    [
+        ("Bash", {"command": 12345}),
+        ("Bash", {"command": None}),
+        ("Bash", {"command": b"echo hi"}),
+        ("Bash", {}),
+        ("PowerShell", {"command": ["a"]}),
+        ("Write", {"file_path": 5, "content": "x"}),
+        ("Write", {"file_path": "a\x00b", "content": "x"}),
+        ("Edit", {"file_path": {"x": 1}}),
+        ("WebFetch", {"url": 7}),
+        ("WebFetch", {"url": "http://[::1"}),
+        ("WebFetch", {"url": "\xff\xfe"}),
+        ("Read", {"file_path": "C:\\" + "a\\" * 5000}),
+        ("Grep", {"path": None}),
+    ],
+)
 def test_malformed_tool_input_never_crashes(mon, tool, inp):
     d = timed(mon, tool, **inp)
     assert d.action in ("allow", "log", "warn", "ask", "block", "kill")

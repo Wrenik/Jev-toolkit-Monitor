@@ -67,7 +67,14 @@ def call_from_body(body: dict[str, Any]) -> Call | None:
     cwd = body.get("cwd") if isinstance(body.get("cwd"), str) and body.get("cwd") else os.getcwd()
     root = body.get("root") if isinstance(body.get("root"), str) and body.get("root") else cwd
     sess, agent = body.get("session"), body.get("agent_id")
-    return Call(tool, inp, str(cwd), str(root), sess if isinstance(sess, str) else None, agent if isinstance(agent, str) else None)
+    return Call(
+        tool,
+        inp,
+        str(cwd),
+        str(root),
+        sess if isinstance(sess, str) else None,
+        agent if isinstance(agent, str) else None,
+    )
 
 
 def health_payload(m: Monitor, started: str) -> dict[str, Any]:
@@ -117,7 +124,14 @@ def make_handler(m: Monitor, var_dir: Path) -> type[BaseHTTPRequestHandler]:
                 if path == "/check":
                     call = call_from_body(body)
                     if call is None:
-                        self._send(200, {"ok": False, "error": "tool and input required", "class": tool_class(str(body.get("tool", "")))})
+                        self._send(
+                            200,
+                            {
+                                "ok": False,
+                                "error": "tool and input required",
+                                "class": tool_class(str(body.get("tool", ""))),
+                            },
+                        )
                         return
                     self._send(200, m.check(call).to_dict())
                 elif path in ("/result", "/describe"):
@@ -157,7 +171,9 @@ def make_handler(m: Monitor, var_dir: Path) -> type[BaseHTTPRequestHandler]:
                     sess = body.get("session") if isinstance(body.get("session"), str) else None
                     self._send(200, {"ok": m.allow_last(sess)})
                 elif path == "/report":
-                    self._send(200, {"ok": True, "text": would_block_report(read_records(var_dir / "monitor-log.jsonl"))})
+                    self._send(
+                        200, {"ok": True, "text": would_block_report(read_records(var_dir / "monitor-log.jsonl"))}
+                    )
                 elif path == "/shutdown":
                     self._send(200, {"ok": True})
                     threading.Thread(target=self.server.shutdown, daemon=True).start()
@@ -165,7 +181,6 @@ def make_handler(m: Monitor, var_dir: Path) -> type[BaseHTTPRequestHandler]:
                     self._send(404, {"ok": False})
             except Exception as err:  # noqa: BLE001 - always answer; the mod decides by class policy
                 self._send(200, {"ok": False, "error": f"internal {type(err).__name__}"})
-
 
     return Handler
 

@@ -24,7 +24,9 @@ IS_WINDOWS = os.name == "nt"
 # Default macOS volumes are case-insensitive too: `claude.md` is `CLAUDE.md` there.
 FOLD_CASE = IS_WINDOWS or sys.platform == "darwin"
 
-_VAR = re.compile(r"\$env:([A-Za-z_][A-Za-z0-9_]*)|\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?|%([A-Za-z_][A-Za-z0-9_]*)%", re.IGNORECASE)
+_VAR = re.compile(
+    r"\$env:([A-Za-z_][A-Za-z0-9_]*)|\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?|%([A-Za-z_][A-Za-z0-9_]*)%", re.IGNORECASE
+)
 _SHORT83 = re.compile(r"(^|/)[^/]{1,6}~\d+(\.[^/]{0,3})?(?=/|$)")
 _GITBASH = re.compile(r"^/([a-zA-Z])(/|$)")
 MAX_PATH_CHARS = 4096
@@ -80,7 +82,9 @@ def _long_name(path: str) -> str:
         return path
 
 
-def canon(raw: str, cwd: str, env: dict[str, str] | None = None, win: bool | None = None, resolve: bool = True) -> Canon:
+def canon(
+    raw: str, cwd: str, env: dict[str, str] | None = None, win: bool | None = None, resolve: bool = True
+) -> Canon:
     """Normalise `raw` as seen from `cwd`. `win` forces Windows or POSIX rules (tests)."""
     win = IS_WINDOWS if win is None else win
     if len(raw) > MAX_PATH_CHARS:
@@ -95,10 +99,10 @@ def canon(raw: str, cwd: str, env: dict[str, str] | None = None, win: bool | Non
         text = text.replace("\\", "/")
         wsl = re.match(r"^/mnt/([a-zA-Z])(/|$)", text)  # WSL's view of a Windows drive
         if wsl:
-            text = f"{wsl.group(1)}:/" + text[wsl.end():]
+            text = f"{wsl.group(1)}:/" + text[wsl.end() :]
         m = _GITBASH.match(text)
         if m and len(text) > 1 and not os.path.exists(text):
-            text = f"{m.group(1)}:/" + text[m.end():]
+            text = f"{m.group(1)}:/" + text[m.end() :]
     if win and text.startswith("/") and not text.startswith("//"):
         # a rooted path without a drive means "the root of the current drive" (git-bash /usr, /etc, /tmp land here too)
         m = re.match(r"^[a-zA-Z]:", cwd.replace("\\", "/")) or re.match(r"^[a-zA-Z]:", os.getcwd())
@@ -153,7 +157,9 @@ def _glob_regex(pattern: str) -> re.Pattern:
     return re.compile("^" + "".join(out) + "$")
 
 
-def glob_match(path: str, pattern: str, cwd: str = "", win: bool | None = None, env: dict[str, str] | None = None) -> bool:
+def glob_match(
+    path: str, pattern: str, cwd: str = "", win: bool | None = None, env: dict[str, str] | None = None
+) -> bool:
     """Match canonical `path` against a policy glob.
 
     Absolute and `~/` patterns are anchored; a relative pattern such as `CLAUDE.md` or `.claude/**`
@@ -164,12 +170,18 @@ def glob_match(path: str, pattern: str, cwd: str = "", win: bool | None = None, 
     pat = pat.replace("\\", "/")
     if win or (FOLD_CASE and win == IS_WINDOWS):
         pat = pat.casefold()
-    if not _is_abs(pat, win) and not pat.startswith("**") and not (win and pat.startswith("/") and not pat.startswith("//")):
+    if (
+        not _is_abs(pat, win)
+        and not pat.startswith("**")
+        and not (win and pat.startswith("/") and not pat.startswith("//"))
+    ):
         pat = "**/" + pat
     return bool(_glob_regex(pat).match(path))
 
 
-def matches_any(path: str, patterns: list[str], win: bool | None = None, env: dict[str, str] | None = None) -> str | None:
+def matches_any(
+    path: str, patterns: list[str], win: bool | None = None, env: dict[str, str] | None = None
+) -> str | None:
     """First pattern that matches, else None. A pattern that matches a parent folder also counts
     for a path inside it when it ends in `/**`."""
     for p in patterns:

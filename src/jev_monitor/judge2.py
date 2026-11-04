@@ -41,7 +41,13 @@ class SecondOpinion:
         self.policy = policy
 
     def state_for(self, call: Call, findings: list[Finding], intent: dict[str, Any] | None) -> dict[str, Any]:
-        summary = call.input.get("command") or call.input.get("url") or call.input.get("file_path") or call.input.get("path") or ""
+        summary = (
+            call.input.get("command")
+            or call.input.get("url")
+            or call.input.get("file_path")
+            or call.input.get("path")
+            or ""
+        )
         return {
             "task": (intent or {}).get("summary") or "(unknown)",
             "tool": call.tool,
@@ -49,7 +55,9 @@ class SecondOpinion:
             "rule_hits": [f"{f.rule}: {short(f.detail, 120)}" for f in findings][:5],
         }
 
-    def review(self, call: Call, findings: list[Finding], would: str, intent: dict[str, Any] | None, ladder: dict[str, str]) -> tuple[str, dict[str, Any]]:
+    def review(
+        self, call: Call, findings: list[Finding], would: str, intent: dict[str, Any] | None, ladder: dict[str, str]
+    ) -> tuple[str, dict[str, Any]]:
         if not self.policy.judge_enabled:
             return would, {"used": False, "why": "disabled"}
         state = self.state_for(call, findings, intent)
@@ -65,8 +73,14 @@ class SecondOpinion:
             return would, {"used": False, "why": type(err).__name__}
         p_ok = verdict.answers["consistent"].p_yes  # type: ignore[union-attr]
         level = verdict.answers["suspicion"].level  # type: ignore[union-attr]
-        info: dict[str, Any] = {"used": True, "p_consistent": round(p_ok, 3), "suspicion": level, "model": getattr(self.judge, "model", "?"),
-                                "tokens": verdict.input_tokens, "ms": verdict.latency_ms}
+        info: dict[str, Any] = {
+            "used": True,
+            "p_consistent": round(p_ok, 3),
+            "suspicion": level,
+            "model": getattr(self.judge, "model", "?"),
+            "tokens": verdict.input_tokens,
+            "ms": verdict.latency_ms,
+        }
         if p_ok >= self.policy.judge_downgrade_p and level in ("none", "low"):
             info["effect"] = "downgraded to log"
             return "log", info

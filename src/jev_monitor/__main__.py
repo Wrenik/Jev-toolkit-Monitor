@@ -28,7 +28,8 @@ VAR = Path(os.environ["JEV_MONITOR_VAR"]) if os.environ.get("JEV_MONITOR_VAR") e
 
 def _post_server(path: str, body: dict, port: int = DEFAULT_PORT, timeout: float = 4.0) -> dict | None:
     req = urllib.request.Request(
-        f"http://127.0.0.1:{port}{path}", data=json.dumps(body).encode(),
+        f"http://127.0.0.1:{port}{path}",
+        data=json.dumps(body).encode(),
         headers={HEADER: "1", "Content-Type": "application/json"},
     )
     try:
@@ -44,8 +45,14 @@ def hook_main(stdin_text: str) -> tuple[int, str, str]:
     try:
         data = json.loads(stdin_text)
         tool, inp = str(data["tool_name"]), data.get("tool_input") or {}
-        body = {"tool": tool, "input": inp, "cwd": data.get("cwd"), "root": data.get("cwd"), "session": data.get("session_id"),
-                "agent_id": data.get("agent_id")}
+        body = {
+            "tool": tool,
+            "input": inp,
+            "cwd": data.get("cwd"),
+            "root": data.get("cwd"),
+            "session": data.get("session_id"),
+            "agent_id": data.get("agent_id"),
+        }
         d = _post_server("/check", body)
         if d is None or not d.get("ok", True):
             call = call_from_body(body)
@@ -59,7 +66,13 @@ def hook_main(stdin_text: str) -> tuple[int, str, str]:
         return 0, "", ""
     if action == "warn":
         return 0, json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": reason}}), ""
-    out: dict = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask" if action == "ask" else "deny", "permissionDecisionReason": reason}}
+    out: dict = {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "ask" if action == "ask" else "deny",
+            "permissionDecisionReason": reason,
+        }
+    }
     if action == "kill":
         out["continue"] = False
         out["stopReason"] = reason
@@ -76,7 +89,9 @@ def post_hook_main(stdin_text: str) -> tuple[int, str, str]:
         body = {"tool": tool, "text": text, "session": sess}
         d = _post_server("/result", body)
         if d is None or not d.get("ok", True):
-            d = build_monitor(VAR, with_judge=False).check_text("result", tool, text, sess if isinstance(sess, str) else None)
+            d = build_monitor(VAR, with_judge=False).check_text(
+                "result", tool, text, sess if isinstance(sess, str) else None
+            )
     except Exception as err:  # noqa: BLE001
         return 0, "", f"jev-monitor: result check failed ({type(err).__name__}); not checked.\n"
     action, reason = d.get("action", "allow"), d.get("reason", "")
@@ -129,7 +144,9 @@ def main(argv: list[str]) -> int:
         st = State(VAR / "monitor-state.json")
         if len(argv) == 2 and argv[1] in ("on", "off"):
             st.set_results(argv[1] == "on")
-            print(f"results check: {argv[1]} (tool results and MCP tool descriptions are {'sent to the local monitor and scanned' if argv[1] == 'on' else 'not checked'})")
+            print(
+                f"results check: {argv[1]} (tool results and MCP tool descriptions are {'sent to the local monitor and scanned' if argv[1] == 'on' else 'not checked'})"
+            )
             return 0
         ov = st.results_override()
         print(f"results check: {'(policy default)' if ov is None else 'on' if ov else 'off'}")
@@ -154,7 +171,11 @@ def main(argv: list[str]) -> int:
             print(f"policy INVALID: {err}")
             return 2
         snap = State(VAR / "monitor-state.json").snapshot()
-        files = {"policy": str(pfile) if pfile.exists() else "(none: built-in defaults)", "log": str(VAR / "monitor-log.jsonl"), "state": str(VAR / "monitor-state.json")}
+        files = {
+            "policy": str(pfile) if pfile.exists() else "(none: built-in defaults)",
+            "log": str(VAR / "monitor-log.jsonl"),
+            "state": str(VAR / "monitor-state.json"),
+        }
         print(json.dumps({"policy_mode": policy.mode, **snap, "files": files}, indent=1, default=str))
         return 0
     if cmd == "report":
@@ -167,16 +188,18 @@ def main(argv: list[str]) -> int:
         except PolicyError as err:
             print(f"INVALID: {err}")
             return 2
-        print(f"OK ({'file ' + str(pfile) if pfile.exists() else 'built-in defaults'}): mode={p.mode}, hosts={len(p.allow_hosts)}")
+        print(
+            f"OK ({'file ' + str(pfile) if pfile.exists() else 'built-in defaults'}): mode={p.mode}, hosts={len(p.allow_hosts)}"
+        )
         return 0
     if cmd == "check" and len(argv) == 3:
         try:
             tool_input = json.loads(argv[2])
         except ValueError as err:
-            print(f"the second argument must be JSON, e.g. '{{\"command\": \"ls\"}}' ({err})")
+            print(f'the second argument must be JSON, e.g. \'{{"command": "ls"}}\' ({err})')
             return 2
         if not isinstance(tool_input, dict):
-            print("the JSON must be an object, e.g. '{\"command\": \"ls\"}'")
+            print('the JSON must be an object, e.g. \'{"command": "ls"}\'')
             return 2
         m = build_monitor(VAR, with_judge=False)
         call = call_from_body({"tool": argv[1], "input": tool_input, "cwd": os.getcwd()})
@@ -185,8 +208,27 @@ def main(argv: list[str]) -> int:
         return 0
     if cmd == "hook-snippet":
         # Printed, never written: you paste it into .claude/settings.json (project) or ~/.claude/settings.json (all projects).
-        hook = {"type": "command", "command": f'"{sys.executable}" -m jev_monitor hook', "timeout": 10, "onFailure": "block"}
-        print(json.dumps({"hooks": {"PreToolUse": [{"matcher": "Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit|WebFetch|Agent|Task|mcp__.*", "hooks": [hook]}]}}, indent=2))
+        hook = {
+            "type": "command",
+            "command": f'"{sys.executable}" -m jev_monitor hook',
+            "timeout": 10,
+            "onFailure": "block",
+        }
+        print(
+            json.dumps(
+                {
+                    "hooks": {
+                        "PreToolUse": [
+                            {
+                                "matcher": "Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit|WebFetch|Agent|Task|mcp__.*",
+                                "hooks": [hook],
+                            }
+                        ]
+                    }
+                },
+                indent=2,
+            )
+        )
         return 0
     if cmd in ("-V", "--version", "version"):
         from importlib.metadata import PackageNotFoundError, version

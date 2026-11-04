@@ -21,12 +21,40 @@ from .types import HIGH, LOW, MEDIUM, Finding, tool_class
 
 # (category, pattern). Two different categories, or any "coerce" hit, make a finding high.
 _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("override", re.compile(r"(?i)\b(?:ignore|disregard|forget|override)\b[^.\n]{0,30}\b(?:previous|prior|above|earlier|all|any|your|the)\b[^.\n]{0,30}\b(?:instructions?|rules?|prompts?|guidelines|constraints)\b")),
-    ("override", re.compile(r"(?i)\byou (?:are|must) now\b|\bnew (?:system )?instructions?\s*:|(?:^|\n)\s*(?:system|assistant)\s*:\s|<\s*/?\s*(?:system|important|instructions?|admin)\s*>|\[/?INST\]|<\|im_start\|>")),
-    ("conceal", re.compile(r"(?i)\b(?:do not|don'?t|never)\s+(?:tell|mention|inform|reveal|show|let)\b[^.\n]{0,50}\b(?:user|human|operator|anyone)\b|\bwithout\s+(?:telling|informing|asking|notifying)\s+the\s+user\b|\bsilently\b[^.\n]{0,40}\b(?:run|send|read|call|execute)\b")),
-    ("coerce", re.compile(r"(?i)\b(?:read|cat|send|upload|post|exfiltrate|email|copy|forward|include)\b[^.\n]{0,80}(?:~/\.ssh|id_rsa|\.env\b|\.aws|credentials|api[_ -]?keys?|passwords?|secrets?|tokens?)\b[^.\n]{0,100}\b(?:to|at|via|into)\b[^.\n]{0,30}(?:https?://|@|\bserver\b|\bendpoint\b)")),
-    ("coerce", re.compile(r"(?i)\b(?:curl|wget|iwr|irm)\b[^\n|]{0,160}\|\s*(?:ba|z)?sh\b|\bbefore (?:using|calling|running) this tool\b[^.\n]{0,100}\b(?:read|cat|open|include)\b")),
-    ("coerce", re.compile(r"!\[[^\]]*\]\(https?://[^)\s]*[?&][^)\s=]+=[^)\s]*\)")),  # a markdown image whose URL carries data
+    (
+        "override",
+        re.compile(
+            r"(?i)\b(?:ignore|disregard|forget|override)\b[^.\n]{0,30}\b(?:previous|prior|above|earlier|all|any|your|the)\b[^.\n]{0,30}\b(?:instructions?|rules?|prompts?|guidelines|constraints)\b"
+        ),
+    ),
+    (
+        "override",
+        re.compile(
+            r"(?i)\byou (?:are|must) now\b|\bnew (?:system )?instructions?\s*:|(?:^|\n)\s*(?:system|assistant)\s*:\s|<\s*/?\s*(?:system|important|instructions?|admin)\s*>|\[/?INST\]|<\|im_start\|>"
+        ),
+    ),
+    (
+        "conceal",
+        re.compile(
+            r"(?i)\b(?:do not|don'?t|never)\s+(?:tell|mention|inform|reveal|show|let)\b[^.\n]{0,50}\b(?:user|human|operator|anyone)\b|\bwithout\s+(?:telling|informing|asking|notifying)\s+the\s+user\b|\bsilently\b[^.\n]{0,40}\b(?:run|send|read|call|execute)\b"
+        ),
+    ),
+    (
+        "coerce",
+        re.compile(
+            r"(?i)\b(?:read|cat|send|upload|post|exfiltrate|email|copy|forward|include)\b[^.\n]{0,80}(?:~/\.ssh|id_rsa|\.env\b|\.aws|credentials|api[_ -]?keys?|passwords?|secrets?|tokens?)\b[^.\n]{0,100}\b(?:to|at|via|into)\b[^.\n]{0,30}(?:https?://|@|\bserver\b|\bendpoint\b)"
+        ),
+    ),
+    (
+        "coerce",
+        re.compile(
+            r"(?i)\b(?:curl|wget|iwr|irm)\b[^\n|]{0,160}\|\s*(?:ba|z)?sh\b|\bbefore (?:using|calling|running) this tool\b[^.\n]{0,100}\b(?:read|cat|open|include)\b"
+        ),
+    ),
+    (
+        "coerce",
+        re.compile(r"!\[[^\]]*\]\(https?://[^)\s]*[?&][^)\s=]+=[^)\s]*\)"),
+    ),  # a markdown image whose URL carries data
 )
 _scanner: Any = None
 _scanner_tried = False
@@ -62,9 +90,21 @@ def heuristics(text: str, kind: str) -> list[Finding]:
         high = len(cats) >= 2 or "coerce" in cats
         what = "; ".join(f"{c}: {s!r}" for c, s in cats.items())
         label = "tool description" if kind == "description" else "tool result"
-        out.append(Finding("result-injection", HIGH if high else MEDIUM, f"the {label} contains text that reads like instructions to the agent ({what})"))
+        out.append(
+            Finding(
+                "result-injection",
+                HIGH if high else MEDIUM,
+                f"the {label} contains text that reads like instructions to the agent ({what})",
+            )
+        )
     if m := catalog.HIDDEN_CHARS.search(text.lstrip("﻿")):
-        out.append(Finding("result-hidden-unicode", MEDIUM, f"the text contains invisible or bidirectional control characters (U+{ord(m.group(0)):04X})"))
+        out.append(
+            Finding(
+                "result-hidden-unicode",
+                MEDIUM,
+                f"the text contains invisible or bidirectional control characters (U+{ord(m.group(0)):04X})",
+            )
+        )
     return out
 
 
@@ -79,7 +119,9 @@ def scan_text(text: str, policy: Policy, kind: str = "result") -> tuple[list[Fin
                 sev = HIGH if res.action == "block" or res.risk >= 0.8 else MEDIUM
                 why = "; ".join(str(r) for r in res.reasons[:2])[:140]
                 found.append(Finding("result-injection", sev, f"jev_scan: risk {res.risk:.2f} ({why})"))
-            return found + [f for f in heuristics(text, kind) if f.rule == "result-hidden-unicode" and not found], "jev_scan"
+            return found + [
+                f for f in heuristics(text, kind) if f.rule == "result-hidden-unicode" and not found
+            ], "jev_scan"
         except Exception:  # noqa: BLE001, S110 - a scanner that crashes must not hide the built-in checks
             pass
     return heuristics(text, kind), "builtin"
@@ -96,4 +138,8 @@ def cap_for(tool: str, findings: list[Finding]) -> list[Finding]:
     return [Finding(f.rule, min(f.severity, MEDIUM), f.detail, f.hint) for f in findings]
 
 
-LOW_SECRET = Finding("result-contains-secret", LOW, "a secret-looking literal appears in a tool result; later uploads in this session are watched")
+LOW_SECRET = Finding(
+    "result-contains-secret",
+    LOW,
+    "a secret-looking literal appears in a tool result; later uploads in this session are watched",
+)

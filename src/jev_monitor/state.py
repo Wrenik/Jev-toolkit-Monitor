@@ -81,7 +81,11 @@ class State:
 
     def set_latch(self, reason: str, minutes: int, session: str | None) -> None:
         now = time.time()
-        self._update(lambda d: d.__setitem__("latch", {"since": now, "until": now + minutes * 60, "reason": reason, "session": session}))
+        self._update(
+            lambda d: d.__setitem__(
+                "latch", {"since": now, "until": now + minutes * 60, "reason": reason, "session": session}
+            )
+        )
 
     def reset(self) -> bool:
         """Clear the latch. Works from any process; returns whether a latch was active."""
@@ -131,4 +135,10 @@ class State:
     def snapshot(self) -> dict[str, Any]:
         d = self._read()
         latch = self.latch()
-        return {"mode_override": d.get("mode"), "latched": latch is not None, "latch": latch, "intent": self.intent(), "results_override": self.results_override()}
+        return {
+            "mode_override": d.get("mode"),
+            "latched": latch is not None,
+            "latch": latch,
+            "intent": self.intent(),
+            "results_override": self.results_override(),
+        }

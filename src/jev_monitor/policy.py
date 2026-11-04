@@ -30,31 +30,105 @@ class PolicyError(ValueError):
 
 # Files that steer the agent. A write, delete, rename or `git checkout` of any of these is high severity.
 DEFAULT_INSTRUCTION_FILES = [
-    "CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", "GEMINI.md", ".cursorrules", ".windsurfrules",
-    ".claude/**", "~/.claude/**", ".mcp.json", ".claude.json", "~/.claude.json",
-    ".git/hooks/**", ".github/copilot-instructions.md",
-    "**/.cursor/mcp.json", "**/.cursor/rules/**", "**/.vscode/mcp.json", "**/claude_desktop_config.json", "**/.codeium/windsurf/mcp_config.json",
+    "CLAUDE.md",
+    "CLAUDE.local.md",
+    "AGENTS.md",
+    "GEMINI.md",
+    ".cursorrules",
+    ".windsurfrules",
+    ".claude/**",
+    "~/.claude/**",
+    ".mcp.json",
+    ".claude.json",
+    "~/.claude.json",
+    ".git/hooks/**",
+    ".github/copilot-instructions.md",
+    "**/.cursor/mcp.json",
+    "**/.cursor/rules/**",
+    "**/.vscode/mcp.json",
+    "**/claude_desktop_config.json",
+    "**/.codeium/windsurf/mcp_config.json",
 ]
 # The monitor's own policy, state and logs: tampering is critical.
 DEFAULT_MONITOR_FILES = [
-    "var/monitor-*", "**/monitor-policy.toml", "**/monitor-state.json", "**/monitor-log.jsonl", "**/.jev-toolkit/var/monitor-*",
+    "var/monitor-*",
+    "**/monitor-policy.toml",
+    "**/monitor-state.json",
+    "**/monitor-log.jsonl",
+    "**/.jev-toolkit/var/monitor-*",
 ]
 # The monitor's code and mod. Protected too, unless `dev_mode` (you are developing the monitor itself).
 DEFAULT_MONITOR_CODE = ["**/src/jev_monitor/**", "**/claude-mod/jev-monitor/**"]
 DEFAULT_SECRET_FILES = [
-    ".env", ".env.*", "~/.ssh/**", "~/.aws/**", "~/.gnupg/**", "~/.netrc", "~/.git-credentials", "~/.npmrc", "~/.pypirc",
-    "~/.config/gh/**", "~/.docker/config.json", "~/.kube/config", "**/id_rsa*", "**/id_ed25519*", "**/*.pem", "**/*.pfx",
-    "**/credentials.json", "**/*.kdbx", "**/.bash_history", "**/.zsh_history", "**/ConsoleHost_history.txt", "~/.config/gcloud/**", "~/.azure/**",
+    ".env",
+    ".env.*",
+    "~/.ssh/**",
+    "~/.aws/**",
+    "~/.gnupg/**",
+    "~/.netrc",
+    "~/.git-credentials",
+    "~/.npmrc",
+    "~/.pypirc",
+    "~/.config/gh/**",
+    "~/.docker/config.json",
+    "~/.kube/config",
+    "**/id_rsa*",
+    "**/id_ed25519*",
+    "**/*.pem",
+    "**/*.pfx",
+    "**/credentials.json",
+    "**/*.kdbx",
+    "**/.bash_history",
+    "**/.zsh_history",
+    "**/ConsoleHost_history.txt",
+    "~/.config/gcloud/**",
+    "~/.azure/**",
 ]
 SECRET_EXEMPT = [".env.example", ".env.sample", ".env.template", ".env.dist"]
 # Files inside secret folders that hold no secrets: reading them is ordinary (`Get-Content ~/.ssh/config`).
-SECRET_EXEMPT_GLOBS = ["~/.ssh/config", "~/.ssh/known_hosts*", "~/.ssh/*.pub", "**/*.pub", "~/.aws/config", "**/.env.example", "**/.env.sample", "**/.env.template", "**/.env.dist"]
+SECRET_EXEMPT_GLOBS = [
+    "~/.ssh/config",
+    "~/.ssh/known_hosts*",
+    "~/.ssh/*.pub",
+    "**/*.pub",
+    "~/.aws/config",
+    "**/.env.example",
+    "**/.env.sample",
+    "**/.env.template",
+    "**/.env.dist",
+]
 DEFAULT_ALLOW_HOSTS = [
-    "localhost", "127.0.0.1", "::1", "github.com", "api.github.com", "raw.githubusercontent.com", "codeload.github.com",
-    "pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "www.npmjs.com", "crates.io", "static.crates.io",
-    "docs.python.org", "developer.mozilla.org", "docs.anthropic.com", "code.claude.com", "docs.claude.com",
-    "stackoverflow.com", "huggingface.co", "docs.rs", "doc.rust-lang.org", "pkg.go.dev", "proxy.golang.org", "golang.org", "go.dev", "nodejs.org",
-    "learn.microsoft.com", "en.wikipedia.org", "readthedocs.io", "rfc-editor.org",
+    "localhost",
+    "127.0.0.1",
+    "::1",
+    "github.com",
+    "api.github.com",
+    "raw.githubusercontent.com",
+    "codeload.github.com",
+    "pypi.org",
+    "files.pythonhosted.org",
+    "registry.npmjs.org",
+    "www.npmjs.com",
+    "crates.io",
+    "static.crates.io",
+    "docs.python.org",
+    "developer.mozilla.org",
+    "docs.anthropic.com",
+    "code.claude.com",
+    "docs.claude.com",
+    "stackoverflow.com",
+    "huggingface.co",
+    "docs.rs",
+    "doc.rust-lang.org",
+    "pkg.go.dev",
+    "proxy.golang.org",
+    "golang.org",
+    "go.dev",
+    "nodejs.org",
+    "learn.microsoft.com",
+    "en.wikipedia.org",
+    "readthedocs.io",
+    "rfc-editor.org",
 ]
 
 
@@ -94,7 +168,9 @@ class Policy:
     rate_max_write_bytes: int = 3_000_000
     rate_max_hosts: int = 10
     # severity -> action
-    ladder: dict[str, str] = field(default_factory=lambda: {"low": "log", "medium": "warn", "high": "block", "critical": "block"})
+    ladder: dict[str, str] = field(
+        default_factory=lambda: {"low": "log", "medium": "warn", "high": "block", "critical": "block"}
+    )
     kill_after_blocks: int = 3
     kill_window_s: int = 600
     latch_minutes: int = 15
@@ -149,7 +225,19 @@ def load_policy(path: Path | None) -> Policy:
 
 
 def policy_from_dict(data: dict[str, Any]) -> Policy:
-    known = {"mode", "classes", "protected", "scope", "network", "canary", "rate", "ladder", "judge", "results", "taint"}
+    known = {
+        "mode",
+        "classes",
+        "protected",
+        "scope",
+        "network",
+        "canary",
+        "rate",
+        "ladder",
+        "judge",
+        "results",
+        "taint",
+    }
     unknown = set(data) - known
     if unknown:
         raise PolicyError(f"unknown policy section(s): {', '.join(sorted(unknown))}")
@@ -192,8 +280,12 @@ def policy_from_dict(data: dict[str, Any]) -> Policy:
     if "tokens" in can:
         p = replace(p, canary_tokens=_strs(can, "tokens", "canary"))
     rate = data.get("rate", {})
-    for key, attr in (("window_s", "rate_window_s"), ("max_calls", "rate_max_calls"),
-                      ("max_write_bytes", "rate_max_write_bytes"), ("max_hosts", "rate_max_hosts")):
+    for key, attr in (
+        ("window_s", "rate_window_s"),
+        ("max_calls", "rate_max_calls"),
+        ("max_write_bytes", "rate_max_write_bytes"),
+        ("max_hosts", "rate_max_hosts"),
+    ):
         if key in rate:
             if not isinstance(rate[key], int) or rate[key] < 1:
                 raise PolicyError(f"rate.{key} must be a positive integer")
@@ -216,9 +308,13 @@ def policy_from_dict(data: dict[str, Any]) -> Policy:
             raise PolicyError(f"ladder.opaque_action must be one of {LADDER_ACTIONS}")
         p = replace(p, opaque_action=lad["opaque_action"])
     j = data.get("judge", {})
-    for key, attr, typ in (("enabled", "judge_enabled", bool), ("timeout_s", "judge_timeout_s", (int, float)),
-                           ("deadline_s", "judge_deadline_s", (int, float)), ("downgrade_p", "judge_downgrade_p", (int, float)),
-                           ("upgrade_p", "judge_upgrade_p", (int, float))):
+    for key, attr, typ in (
+        ("enabled", "judge_enabled", bool),
+        ("timeout_s", "judge_timeout_s", (int, float)),
+        ("deadline_s", "judge_deadline_s", (int, float)),
+        ("downgrade_p", "judge_downgrade_p", (int, float)),
+        ("upgrade_p", "judge_upgrade_p", (int, float)),
+    ):
         if key in j:
             if not isinstance(j[key], typ):
                 raise PolicyError(f"judge.{key} has the wrong type")
@@ -226,7 +322,11 @@ def policy_from_dict(data: dict[str, Any]) -> Policy:
     r = data.get("results", {})
     if set(r) - {"enabled", "use_scanner", "max_chars"}:
         raise PolicyError("results accepts only enabled, use_scanner and max_chars")
-    rtypes: tuple[tuple[str, str, type], ...] = (("enabled", "results_enabled", bool), ("use_scanner", "results_use_scanner", bool), ("max_chars", "results_max_chars", int))
+    rtypes: tuple[tuple[str, str, type], ...] = (
+        ("enabled", "results_enabled", bool),
+        ("use_scanner", "results_use_scanner", bool),
+        ("max_chars", "results_max_chars", int),
+    )
     for key, attr, rtyp in rtypes:
         if key in r:
             if not isinstance(r[key], rtyp) or (rtyp is int and (isinstance(r[key], bool) or r[key] < 100)):

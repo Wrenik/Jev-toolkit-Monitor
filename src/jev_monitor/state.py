@@ -64,6 +64,14 @@ class State:
             raise ValueError("mode must be monitor or enforce")
         self._update(lambda d: d.__setitem__("mode", mode))
 
+    # ---- opt-in check of tool results and MCP tool descriptions -------
+    def results_override(self) -> bool | None:
+        v = self._read().get("results")
+        return v if isinstance(v, bool) else None
+
+    def set_results(self, on: bool) -> None:
+        self._update(lambda d: d.__setitem__("results", bool(on)))
+
     # ---- kill latch --------------------------------------------------
     def latch(self) -> dict[str, Any] | None:
         latch = self._read().get("latch")
@@ -123,4 +131,4 @@ class State:
     def snapshot(self) -> dict[str, Any]:
         d = self._read()
         latch = self.latch()
-        return {"mode_override": d.get("mode"), "latched": latch is not None, "latch": latch, "intent": self.intent()}
+        return {"mode_override": d.get("mode"), "latched": latch is not None, "latch": latch, "intent": self.intent(), "results_override": self.results_override()}

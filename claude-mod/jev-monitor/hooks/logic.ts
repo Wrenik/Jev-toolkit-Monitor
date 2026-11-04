@@ -15,6 +15,7 @@ export interface CheckResponse {
   reason?: string
   rules?: string[]
   severity?: string
+  skipped?: boolean
 }
 
 // What the server last told us. Used when the server cannot be reached, so a restart of the
@@ -23,6 +24,8 @@ export interface FailTable {
   mode: Mode
   classModes: Partial<Record<ToolClass, Mode>>
   fail: Record<ToolClass, 'closed' | 'open'>
+  // true when the opt-in check of tool results and MCP tool descriptions is on (the server says so in /health)
+  results?: boolean
 }
 
 export const DEFAULT_TABLE: FailTable = {
@@ -106,6 +109,25 @@ export function decide(tool: string, r: CheckResponse | null, table: FailTable):
       return { kind: 'kill', text: reason, toast: `jev-monitor STOPPED the agent: ${oneLine(reason)} Clear it with /jevmonitor reset.` }
   }
   return { kind: 'pass' }
+}
+
+// Opt-in: the verdict on a tool RESULT (text the agent is about to read). The tool has already run, so the worst answer is to
+// withhold its result; a failed or skipped check never blocks anything.
+export function resultVerdict(tool: string, r: CheckResponse | null): Verdict {
+  if (r === null || !r.ok || r.skipped || !r.action) return { kind: 'pass' }
+  const reason = r.reason ?? ''
+  if (r.action === 'block' || r.action === 'ask' || r.action === 'kill') {
+    return { kind: 'deny', text: reason, toast: `jev-monitor withheld the result of ${tool}: ${oneLine(reason)}` }
+  }
+  if (r.action === 'warn' && reason) return { kind: 'note', text: reason, toast: undefined }
+  return { kind: 'pass' }
+}
+
+// A short stable hash so a tool description is judged once per version, not on every render.
+export function hashText(s: string): string {
+  let h = 5381
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0
+  return `${s.length}:${(h >>> 0).toString(16)}`
 }
 
 // The failure handler cannot wait for the server (it has a short grace), so it uses the table only.

@@ -82,7 +82,8 @@ def test_symlink_resolves(tmp_path):
 
 
 def test_glob_anchoring_and_depth():
-    gm = lambda p, pat: paths.glob_match(p, pat, win=False, env={"HOME": "/home/u"})
+    def gm(p, pat):
+        return paths.glob_match(p, pat, win=False, env={"HOME": "/home/u"})
     assert gm("/work/proj/CLAUDE.md", "CLAUDE.md")
     assert gm("/work/proj/sub/deep/CLAUDE.md", "CLAUDE.md")
     assert gm("/work/proj/.claude/hooks/x.sh", ".claude/**")

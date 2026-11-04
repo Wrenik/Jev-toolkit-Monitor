@@ -33,6 +33,7 @@ DEFAULT_INSTRUCTION_FILES = [
     "CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", "GEMINI.md", ".cursorrules", ".windsurfrules",
     ".claude/**", "~/.claude/**", ".mcp.json", ".claude.json", "~/.claude.json",
     ".git/hooks/**", ".github/copilot-instructions.md",
+    "**/.cursor/mcp.json", "**/.cursor/rules/**", "**/.vscode/mcp.json", "**/claude_desktop_config.json", "**/.codeium/windsurf/mcp_config.json",
 ]
 # The monitor's own policy, state and logs: tampering is critical.
 DEFAULT_MONITOR_FILES = [
@@ -43,7 +44,7 @@ DEFAULT_MONITOR_CODE = ["**/src/jev_monitor/**", "**/claude-mod/jev-monitor/**"]
 DEFAULT_SECRET_FILES = [
     ".env", ".env.*", "~/.ssh/**", "~/.aws/**", "~/.gnupg/**", "~/.netrc", "~/.git-credentials", "~/.npmrc", "~/.pypirc",
     "~/.config/gh/**", "~/.docker/config.json", "~/.kube/config", "**/id_rsa*", "**/id_ed25519*", "**/*.pem", "**/*.pfx",
-    "**/credentials.json", "**/*.kdbx",
+    "**/credentials.json", "**/*.kdbx", "**/.bash_history", "**/.zsh_history", "**/ConsoleHost_history.txt", "~/.config/gcloud/**", "~/.azure/**",
 ]
 SECRET_EXEMPT = [".env.example", ".env.sample", ".env.template", ".env.dist"]
 # Files inside secret folders that hold no secrets: reading them is ordinary (`Get-Content ~/.ssh/config`).
@@ -106,6 +107,12 @@ class Policy:
     judge_downgrade_p: float = 0.9  # P(consistent) at or above this lets a medium finding drop to log
     judge_upgrade_p: float = 0.2  # P(consistent) at or below this (and suspicion high) lets a medium one become high
     allow_overrides_per_session: int = 5
+    # tool RESULTS and MCP tool descriptions (opt-in: every result is sent to the local server, so it is off until asked for)
+    results_enabled: bool = False
+    results_use_scanner: bool = True  # use jev_scan when it is installed
+    results_max_chars: int = 60_000
+    # cross-call taint: how long a read of a secret file marks the session
+    taint_window_s: int = 3600
 
     def class_mode(self, tool_class: str, global_mode: str) -> str:
         cp = self.classes.get(tool_class)
@@ -142,7 +149,7 @@ def load_policy(path: Path | None) -> Policy:
 
 
 def policy_from_dict(data: dict[str, Any]) -> Policy:
-    known = {"mode", "classes", "protected", "scope", "network", "canary", "rate", "ladder", "judge"}
+    known = {"mode", "classes", "protected", "scope", "network", "canary", "rate", "ladder", "judge", "results", "taint"}
     unknown = set(data) - known
     if unknown:
         raise PolicyError(f"unknown policy section(s): {', '.join(sorted(unknown))}")
@@ -170,7 +177,7 @@ def policy_from_dict(data: dict[str, Any]) -> Policy:
     prot = data.get("protected", {})
     for key in ("instruction_files", "monitor_files", "monitor_code", "secret_files"):
         if key in prot:
-            p = replace(p, **{key: _strs(prot, key, "protected")})
+            p = replace(p, **{key: _strs(prot, key, "protected")})  # type: ignore[arg-type]
     if "dev_mode" in prot:
         p = replace(p, dev_mode=bool(prot["dev_mode"]))
     scope = data.get("scope", {})
@@ -216,4 +223,20 @@ def policy_from_dict(data: dict[str, Any]) -> Policy:
             if not isinstance(j[key], typ):
                 raise PolicyError(f"judge.{key} has the wrong type")
             p = replace(p, **{attr: j[key]})
+    r = data.get("results", {})
+    if set(r) - {"enabled", "use_scanner", "max_chars"}:
+        raise PolicyError("results accepts only enabled, use_scanner and max_chars")
+    rtypes: tuple[tuple[str, str, type], ...] = (("enabled", "results_enabled", bool), ("use_scanner", "results_use_scanner", bool), ("max_chars", "results_max_chars", int))
+    for key, attr, rtyp in rtypes:
+        if key in r:
+            if not isinstance(r[key], rtyp) or (rtyp is int and (isinstance(r[key], bool) or r[key] < 100)):
+                raise PolicyError(f"results.{key} has the wrong type or value")
+            p = replace(p, **{attr: r[key]})
+    tn = data.get("taint", {})
+    if set(tn) - {"window_s"}:
+        raise PolicyError("taint accepts only window_s")
+    if "window_s" in tn:
+        if not isinstance(tn["window_s"], int) or isinstance(tn["window_s"], bool) or tn["window_s"] < 1:
+            raise PolicyError("taint.window_s must be a positive integer")
+        p = replace(p, taint_window_s=tn["window_s"])
     return p

@@ -7,7 +7,7 @@ import pytest
 from jev_monitor import rules
 from jev_monitor.policy import Policy, policy_from_dict
 from jev_monitor.shell import analyze
-from jev_monitor.types import CRITICAL, HIGH, Call
+from jev_monitor.types import CRITICAL, Call
 
 
 @pytest.fixture()

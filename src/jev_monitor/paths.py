@@ -12,6 +12,7 @@ links after the check (TOCTOU). These are listed in docs/AGENT_MONITOR.md.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import posixpath
 import re
@@ -23,7 +24,7 @@ IS_WINDOWS = os.name == "nt"
 # Default macOS volumes are case-insensitive too: `claude.md` is `CLAUDE.md` there.
 FOLD_CASE = IS_WINDOWS or sys.platform == "darwin"
 
-_VAR = re.compile(r"\$env:([A-Za-z_][A-Za-z0-9_]*)|\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?|%([A-Za-z_][A-Za-z0-9_]*)%", re.I)
+_VAR = re.compile(r"\$env:([A-Za-z_][A-Za-z0-9_]*)|\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?|%([A-Za-z_][A-Za-z0-9_]*)%", re.IGNORECASE)
 _SHORT83 = re.compile(r"(^|/)[^/]{1,6}~\d+(\.[^/]{0,3})?(?=/|$)")
 _GITBASH = re.compile(r"^/([a-zA-Z])(/|$)")
 MAX_PATH_CHARS = 4096
@@ -38,7 +39,7 @@ class Canon:
 
 
 def home_dir(env: dict[str, str] | None = None) -> str:
-    env = env if env is not None else os.environ
+    env = env if env is not None else dict(os.environ)
     return env.get("USERPROFILE") or env.get("HOME") or os.path.expanduser("~")
 
 
@@ -73,7 +74,7 @@ def _long_name(path: str) -> str:
         import ctypes
 
         buf = ctypes.create_unicode_buffer(32768)
-        n = ctypes.windll.kernel32.GetLongPathNameW(path, buf, 32768)  # type: ignore[attr-defined]
+        n = ctypes.windll.kernel32.GetLongPathNameW(path, buf, 32768)
         return buf.value if 0 < n < 32768 else path
     except Exception:  # noqa: BLE001
         return path
@@ -92,6 +93,9 @@ def canon(raw: str, cwd: str, env: dict[str, str] | None = None, win: bool | Non
         return Canon(raw, True, "command substitution")
     if win:
         text = text.replace("\\", "/")
+        wsl = re.match(r"^/mnt/([a-zA-Z])(/|$)", text)  # WSL's view of a Windows drive
+        if wsl:
+            text = f"{wsl.group(1)}:/" + text[wsl.end():]
         m = _GITBASH.match(text)
         if m and len(text) > 1 and not os.path.exists(text):
             text = f"{m.group(1)}:/" + text[m.end():]
@@ -109,15 +113,12 @@ def canon(raw: str, cwd: str, env: dict[str, str] | None = None, win: bool | Non
         text = posixpath.normpath(text)
     # `//host/share` style paths keep two leading slashes through normpath on POSIX only.
     if resolve and (win == IS_WINDOWS):
-        try:
+        with contextlib.suppress(OSError):
             text = os.path.realpath(text).replace("\\", "/") if win else os.path.realpath(text)
-        except OSError:
-            pass
     if win or (FOLD_CASE and win == IS_WINDOWS):
         text = text.casefold()
     if win:
-        if text.startswith("//?/"):
-            text = text[4:]
+        text = text.removeprefix("//?/")
     ambiguous = bool(_SHORT83.search(text)) and win
     return Canon(text, ambiguous, "unresolved 8.3 short name" if ambiguous else "")
 

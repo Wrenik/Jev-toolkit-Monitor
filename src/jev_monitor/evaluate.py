@@ -93,6 +93,9 @@ def run_scenario(sc: dict[str, Any], sb: Sandbox, policy: Policy, judge=None) ->
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(text, encoding="utf-8")
     worst, worst_d = "allow", None
+    for pre in sc.get("pre", []):  # earlier calls of the same session (cross-call scenarios); their verdict is not scored
+        m.check(Call(pre["tool"], _fill(pre["input"], sub), str(sb.root), str(sb.root), "eval"))
+        tick["t"] += 0.2
     for i in range(int(sc.get("repeat", 1))):
         call = Call(sc["tool"], inp if sc.get("repeat", 1) == 1 else {**inp, "_n": i}, str(sb.root), str(sb.root), "eval")
         tick["t"] += 0.2  # a burst: five calls a second
@@ -243,7 +246,7 @@ def main(argv: list[str]) -> int:
     sb = Sandbox()
     try:
         out: dict[str, Any] = {}
-        for name in ("tune", "heldout", "heldout2", "heldout3", "heldout4", "heldout5"):
+        for name in ("tune", "heldout", "heldout2", "heldout3", "heldout4", "heldout5", "heldout6"):
             if which in (name, "all") and (EVAL_DIR / f"{name}.toml").exists():
                 out[name] = summarise([run_scenario(sc, sb, policy, judge) for sc in load_set(name)])
         if day_n:

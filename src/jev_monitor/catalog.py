@@ -6,24 +6,12 @@ from __future__ import annotations
 import re
 
 # --- package typosquatting -------------------------------------------------------------------------------------
-PIP_POPULAR = frozenset("""requests numpy pandas scipy matplotlib flask django fastapi pydantic pytest setuptools wheel boto3 botocore urllib3 certifi
-idna charset-normalizer cryptography pyyaml jinja2 markupsafe click colorama attrs packaging typing-extensions six python-dateutil pytz
-sqlalchemy psycopg2 aiohttp httpx beautifulsoup4 lxml pillow scikit-learn tensorflow torch transformers openai anthropic langchain
-uvicorn gunicorn celery redis pymongo selenium playwright black ruff mypy pylint flake8 tox poetry pipenv virtualenv twine
-cffi pycparser rsa pyasn1 protobuf grpcio google-auth awscli azure-core tqdm rich typer tabulate docker paramiko fabric
-openpyxl xlrd pyjwt bcrypt passlib werkzeug tornado starlette alembic sphinx coverage pytest-cov hypothesis numba keras jupyter ipython""".split())
+PIP_POPULAR = frozenset(["requests", "numpy", "pandas", "scipy", "matplotlib", "flask", "django", "fastapi", "pydantic", "pytest", "setuptools", "wheel", "boto3", "botocore", "urllib3", "certifi", "idna", "charset-normalizer", "cryptography", "pyyaml", "jinja2", "markupsafe", "click", "colorama", "attrs", "packaging", "typing-extensions", "six", "python-dateutil", "pytz", "sqlalchemy", "psycopg2", "aiohttp", "httpx", "beautifulsoup4", "lxml", "pillow", "scikit-learn", "tensorflow", "torch", "transformers", "openai", "anthropic", "langchain", "uvicorn", "gunicorn", "celery", "redis", "pymongo", "selenium", "playwright", "black", "ruff", "mypy", "pylint", "flake8", "tox", "poetry", "pipenv", "virtualenv", "twine", "cffi", "pycparser", "rsa", "pyasn1", "protobuf", "grpcio", "google-auth", "awscli", "azure-core", "tqdm", "rich", "typer", "tabulate", "docker", "paramiko", "fabric", "openpyxl", "xlrd", "pyjwt", "bcrypt", "passlib", "werkzeug", "tornado", "starlette", "alembic", "sphinx", "coverage", "pytest-cov", "hypothesis", "numba", "keras", "jupyter", "ipython"])
 
-NPM_POPULAR = frozenset("""react react-dom lodash express axios moment chalk commander debug typescript webpack babel-core eslint prettier jest mocha
-vue angular next nuxt svelte vite rollup tailwindcss postcss autoprefixer dotenv uuid yargs request async bluebird underscore jquery
-body-parser cors mongoose sequelize passport jsonwebtoken bcrypt bcryptjs socket.io ws redux react-redux rxjs zod prisma fs-extra glob rimraf
-mkdirp semver minimist inquirer ora nodemon concurrently cross-env husky lint-staged ts-node tsx vitest cypress playwright puppeteer
-node-fetch cheerio dayjs date-fns classnames styled-components formik yup immer swr graphql apollo-server electron""".split())
+NPM_POPULAR = frozenset(["react", "react-dom", "lodash", "express", "axios", "moment", "chalk", "commander", "debug", "typescript", "webpack", "babel-core", "eslint", "prettier", "jest", "mocha", "vue", "angular", "next", "nuxt", "svelte", "vite", "rollup", "tailwindcss", "postcss", "autoprefixer", "dotenv", "uuid", "yargs", "request", "async", "bluebird", "underscore", "jquery", "body-parser", "cors", "mongoose", "sequelize", "passport", "jsonwebtoken", "bcrypt", "bcryptjs", "socket.io", "ws", "redux", "react-redux", "rxjs", "zod", "prisma", "fs-extra", "glob", "rimraf", "mkdirp", "semver", "minimist", "inquirer", "ora", "nodemon", "concurrently", "cross-env", "husky", "lint-staged", "ts-node", "tsx", "vitest", "cypress", "playwright", "puppeteer", "node-fetch", "cheerio", "dayjs", "date-fns", "classnames", "styled-components", "formik", "yup", "immer", "swr", "graphql", "apollo-server", "electron"])
 
 # programs that are routinely launched through npx/bunx/uvx/dlx without being installed first
-KNOWN_RUNNERS = frozenset("""prettier eslint tsc typescript vite jest vitest mocha next nuxt nx turbo tsx ts-node playwright cypress degit rimraf serve http-server
-concurrently npm-check-updates ncu tailwindcss prisma drizzle-kit nodemon husky lint-staged biome wrangler vercel netlify-cli expo storybook
-create-react-app create-next-app create-vite create-vue create-t3-app ruff black mypy pytest pip-audit uv poetry tox httpie pre-commit
-cowsay yarn pnpm npm playwright-core eslint_d stylelint markdownlint-cli tsup esbuild rollup webpack astro sv svelte-kit gatsby""".split())
+KNOWN_RUNNERS = frozenset(["prettier", "eslint", "tsc", "typescript", "vite", "jest", "vitest", "mocha", "next", "nuxt", "nx", "turbo", "tsx", "ts-node", "playwright", "cypress", "degit", "rimraf", "serve", "http-server", "concurrently", "npm-check-updates", "ncu", "tailwindcss", "prisma", "drizzle-kit", "nodemon", "husky", "lint-staged", "biome", "wrangler", "vercel", "netlify-cli", "expo", "storybook", "create-react-app", "create-next-app", "create-vite", "create-vue", "create-t3-app", "ruff", "black", "mypy", "pytest", "pip-audit", "uv", "poetry", "tox", "httpie", "pre-commit", "cowsay", "yarn", "pnpm", "npm", "playwright-core", "eslint_d", "stylelint", "markdownlint-cli", "tsup", "esbuild", "rollup", "webpack", "astro", "sv", "svelte-kit", "gatsby"])
 
 
 def _one_edit(a: str, b: str) -> bool:
@@ -67,7 +55,7 @@ SECRET_PATTERN = re.compile(r"(?i)\.pem\b|id_rsa|id_ed25519|\.kdbx|\.pfx|\.env\b
 STAGE_TEXT = re.compile(r"(?i)(?:^|[\s'\"=:(])(?:/tmp/|/var/tmp/|/dev/shm/|\$TEMP\b|\$env:TEMP\b|%TEMP%|%TMP%|\$TMPDIR|[A-Za-z]:[\\/]Users[\\/]Public\b|~/Downloads|\$HOME/Downloads)|[\\/]Temp[\\/]")
 REDIRECT_VARS = re.compile(r"(?i)^(?:(?:ANTHROPIC|OPENAI|GOOGLE|GEMINI|MISTRAL|COHERE)_(?:BASE_URL|API_BASE|API_URL|ENDPOINT)|https?_proxy|all_proxy)$")
 
-HIDDEN_CHARS = re.compile("[​⁠‪-‮⁦-⁩\U000e0000-\U000e007f]")
+HIDDEN_CHARS = re.compile("[\u200b\u2060\u202a-\u202e\u2066-\u2069\U000e0000-\U000e007f]")
 CI_FILES = re.compile(r"(?i)(?:^|/)(?:\.github/workflows/[^/]+\.ya?ml|\.gitlab-ci\.ya?ml|azure-pipelines\.ya?ml|Jenkinsfile|\.circleci/config\.ya?ml|bitbucket-pipelines\.ya?ml)$")
 CI_RISK = re.compile(
     r"(?i)pull_request_target|(?:curl|wget|iwr|irm)[^\n]*\|\s*(?:ba|z)?sh\b|toJSON\(\s*secrets\s*\)|secrets\.[A-Z0-9_]+[^\n]*(?:curl|wget|nc |base64)|"
@@ -89,3 +77,7 @@ CRED_READ = (
     ("gcloud", None, r"print-(?:access|identity)-token"), ("az", None, r"get-access-token"), ("keyctl", None, r"print|read"),
     ("vault", None, r"\bread\b|kv\s+get"), ("lazagne", None, r""), ("mimikatz", None, r""), ("get-storedcredential", None, r""),
 )
+
+# a download-and-run line sitting inside text (an echo into a script, a heredoc): not executed now, but written down to run later
+DROPPER_TEXT = re.compile(r"(?i)\b(?:curl|wget|iwr|irm|invoke-webrequest|invoke-restmethod)\b[^\n|]{0,200}\|\s*(?:iex|(?:ba|z)?sh|python3?|powershell|pwsh)\b")
+SCRIPT_EXT = (".sh", ".bash", ".zsh", ".bat", ".cmd", ".ps1", ".py", ".js", ".vbs", ".rb", ".pl", ".yml", ".yaml", ".json")

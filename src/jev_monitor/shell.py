@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import glob as globlib
 import os
+import pathlib
 import posixpath
 import re
 from dataclasses import dataclass, field, fields
@@ -65,7 +66,7 @@ class Analysis:
     sweeps: list[str] = field(default_factory=list)  # search commands (find, grep, Get-ChildItem ...)
     cred: list[str] = field(default_factory=list)  # reads of credential stores
 
-    def merge(self, other: "Analysis") -> None:
+    def merge(self, other: Analysis) -> None:
         for f in fields(self):
             getattr(self, f.name).extend(getattr(other, f.name))
 
@@ -300,10 +301,7 @@ class _Lexer:
         c = text[i]
         if not (c in ";|&()" or (c in "{}" and self.ps)):
             return False
-        if c == "|" and text.startswith("||", i):
-            self.new_segment()
-            self.i += 2
-        elif c == "&" and text.startswith("&&", i):
+        if c == "|" and text.startswith("||", i) or c == "&" and text.startswith("&&", i):
             self.new_segment()
             self.i += 2
         elif c == "|":
@@ -364,6 +362,7 @@ def tokenize(text: str, ps: bool = False) -> list[Segment]:
 
 
 # ------------------------------------------------------------------ command tables
+_CONTROL_WORDS = {"do", "then", "else", "elif", "if", "while", "until", "!", "{"}
 _WRAPPERS = {"sudo", "doas", "nohup", "time", "command", "builtin", "exec", "nice", "setsid", "stdbuf", "ionice", "chronic", "unbuffer"}
 _SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "fish", "ash"}
 _PS_SHELLS = {"powershell", "pwsh"}
@@ -398,7 +397,7 @@ _ENCODED_PS = re.compile(r"(?i)(^|\s)-e(nc|ncodedcommand)?\b")
 _SECRET_VAR = re.compile(r"(?i)(?:\$\{?(?:env:)?|%)\w*(?:token|secret|passw(?:or)?d|api_?key|private_?key|credential|access_?key)\w*")
 _DEV_TCP = re.compile(r"/dev/(?:tcp|udp)/([^/\s'\"]+)/")
 _SOURCE_OK = {"activate", "activate.sh", "activate.fish", "activate.ps1", "nvm.sh", "conda.sh"}  # sourcing these is routine
-_WIN_SWITCH = re.compile(r"^/(?:[A-Za-z?](?::\S*)?|grant|deny|remove|inheritance|reset|save|restore|setowner|findsid|verify|substitute)$", re.I)
+_WIN_SWITCH = re.compile(r"^/(?:[A-Za-z?](?::\S*)?|grant|deny|remove|inheritance|reset|save|restore|setowner|findsid|verify|substitute)$", re.IGNORECASE)
 _WIN_CMDS = {"del", "erase", "rd", "rmdir", "xcopy", "robocopy", "attrib", "icacls", "cacls", "takeown"}
 _TEXT_ONLY = {"echo", "printf", "grep", "egrep", "fgrep", "rg", "ag", "awk", "sed", "cat", "head", "tail", "less", "more", "wc", "diff", "tr", "sort", "uniq", "cut",
               "write-host", "write-output", "write-error", "select-string", "findstr", "ls", "dir", "type", "true", "false", "test", "[", "open", "xdg-open", "start", "man", "which", "where"}
@@ -412,7 +411,7 @@ def _unresolvable(text: str) -> bool:
     """Does `text` hold an expansion the monitor cannot resolve itself? HOME-like variables it can."""
     if "`" in text or "$(" in text or "<(" in text:
         return True
-    names = [next(g for g in m.groups() if g) for m in re.finditer(r"\$env:(\w+)|\$\{(\w+)\}|\$(\w+)|%(\w+)%", text, flags=re.I)]
+    names = [next(g for g in m.groups() if g) for m in re.finditer(r"\$env:(\w+)|\$\{(\w+)\}|\$(\w+)|%(\w+)%", text, flags=re.IGNORECASE)]
     if re.search(r"\$[^\w{(e]", text):
         return True
     return any(n.lower() not in _SAFE_VARS for n in names)
@@ -420,7 +419,7 @@ def _unresolvable(text: str) -> bool:
 
 def _name(tok: Tok) -> str:
     base = tok.text.replace("\\", "/").rsplit("/", 1)[-1].lower()
-    return base[:-4] if base.endswith(".exe") else base
+    return base.removesuffix(".exe")
 
 
 NET_COMMANDS = _NET_FETCH | _NET_RAW
@@ -475,7 +474,7 @@ class _Walker:
                     return v
             return m.group(0)
 
-        new = re.sub(r"\$env:(\w+)|\$\{(\w+)\}|\$(\w+)|%(\w+)%", rep, text, flags=re.I)
+        new = re.sub(r"\$env:(\w+)|\$\{(\w+)\}|\$(\w+)|%(\w+)%", rep, text, flags=re.IGNORECASE)
         if new != text and not re.search(r"\$[A-Za-z_{(]|%\w+%", new):
             dyn = False if "$(" not in new and "`" not in new else dyn
         return Tok(new, dyn, tok.glob, tok.quoted)
@@ -582,6 +581,9 @@ class _Walker:
         # unwrap
         while words:
             n = _name(words[0])
+            if n in _CONTROL_WORDS and not self.ps:  # `do rm -rf x`, `then curl ... | sh`: the command is the next word
+                words.pop(0)
+                continue
             if n in _WRAPPERS:
                 if n in ("sudo", "doas"):
                     self.a.commands.append(n)
@@ -669,12 +671,13 @@ class _Walker:
         win_rec = cmd in _WIN_CMDS and any(f.lower() in ("-s", "-t", "-r") for f in flags)  # /S /T /R switches
         shell_extra.catalogue(self, cmd, args, pos, seg)
         shell_extra.script_runners(self, cmd, args, pos)
+        shell_cloud.cloud(self, cmd, args, pos, seg)
 
         for handler in (self._d_core, self._d_files, self._d_programs, self._d_network, self._d_admin):
             if handler(cmd, args, pos, flags, seg, win_rec):
                 return
 
-    def _d_core(self, cmd: str, args: list[Tok], pos: list[Tok], flags: list[str], seg: Segment, win_rec: bool) -> bool:  # noqa: C901
+    def _d_core(self, cmd: str, args: list[Tok], pos: list[Tok], flags: list[str], seg: Segment, win_rec: bool) -> bool:
         """Shell builtins: cd, export, eval, source, nested shells. True when the command was handled."""
         if cmd in ("cd", "pushd", "set-location", "sl", "chdir"):
             t = pos[0] if pos else None
@@ -708,7 +711,7 @@ class _Walker:
             return True
         return False
 
-    def _d_files(self, cmd: str, args: list[Tok], pos: list[Tok], flags: list[str], seg: Segment, win_rec: bool) -> bool:  # noqa: C901
+    def _d_files(self, cmd: str, args: list[Tok], pos: list[Tok], flags: list[str], seg: Segment, win_rec: bool) -> bool:
         """Commands that write, copy, delete or search files. True when the command was handled."""
         if cmd in ("tee", "tee-object"):
             for t in pos:
@@ -758,7 +761,7 @@ class _Walker:
             return True
         return False
 
-    def _d_programs(self, cmd: str, args: list[Tok], pos: list[Tok], flags: list[str], seg: Segment, win_rec: bool) -> bool:  # noqa: C901
+    def _d_programs(self, cmd: str, args: list[Tok], pos: list[Tok], flags: list[str], seg: Segment, win_rec: bool) -> bool:
         """Version control and interpreters. True when the command was handled."""
         if self._system(cmd, args, pos, flags):
             return True
@@ -770,7 +773,7 @@ class _Walker:
             return True
         return False
 
-    def _d_network(self, cmd: str, args: list[Tok], pos: list[Tok], flags: list[str], seg: Segment, win_rec: bool) -> bool:  # noqa: C901
+    def _d_network(self, cmd: str, args: list[Tok], pos: list[Tok], flags: list[str], seg: Segment, win_rec: bool) -> bool:
         """Fetchers, raw sockets, DNS tools. True when the command was handled."""
         if cmd in _NET_FETCH:
             self._fetch(cmd, args)
@@ -789,7 +792,7 @@ class _Walker:
             return True
         return False
 
-    def _d_admin(self, cmd: str, args: list[Tok], pos: list[Tok], flags: list[str], seg: Segment, win_rec: bool) -> bool:  # noqa: C901
+    def _d_admin(self, cmd: str, args: list[Tok], pos: list[Tok], flags: list[str], seg: Segment, win_rec: bool) -> bool:
         """Persistence, protections, containers, package managers, archives, and the catch-all URL scan. True when the command was handled."""
         if self._persistence(cmd, args, flags):
             return True
@@ -1173,11 +1176,11 @@ class _Walker:
 
     def _git_config_pair(self, joined: str) -> None:
         """`git config <key> <value>` or `git -c key=value`: keys that make git run a program or switch off checks."""
-        if re.search(r"core\.hookspath", joined, re.I):
+        if re.search(r"core\.hookspath", joined, re.IGNORECASE):
             self.a.mentions.append("git-hooks-path")
-        if re.search(r"(^|\s)!|core\.(sshcommand|pager|editor|fsmonitor|askpass)\b|diff\.external|credential\.helper[\s=]+!|protocol\.ext\.allow", joined, re.I):
+        if re.search(r"(^|\s)!|core\.(sshcommand|pager|editor|fsmonitor|askpass)\b|diff\.external|credential\.helper[\s=]+!|protocol\.ext\.allow", joined, re.IGNORECASE):
             self.a.persist.append("git config sets a command that git will run later")
-        if re.search(r"http\.sslverify\s*[ =]\s*false", joined, re.I):
+        if re.search(r"http\.sslverify\s*[ =]\s*false", joined, re.IGNORECASE):
             self.a.persist.append("git TLS verification is switched off")
 
     def _patch_targets(self, files: list[Tok]) -> None:
@@ -1189,10 +1192,10 @@ class _Walker:
                 if os.path.getsize(full) > 2_000_000:
                     self.a.bulk.append(f"git apply of a large patch ({path})")
                     continue
-                body = open(full, encoding="utf-8", errors="replace").read()
+                body = pathlib.Path(full).read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue  # the command will fail by itself
-            for m in re.finditer(r"^\+\+\+ (?:[ab]/)?(\S+)", body, re.M):
+            for m in re.finditer(r"^\+\+\+ (?:[ab]/)?(\S+)", body, re.MULTILINE):
                 if m.group(1) != "/dev/null":
                     self.target(Tok(m.group(1)), "write", "git apply")
 
@@ -1227,7 +1230,9 @@ class _Walker:
                 self.a.words.append(lit)
         if re.search(r"\b(?:exec|eval|compile)\s*\(|__import__\(|base64\.b64decode|subprocess|os\.system|child_process", code):
             self.a.mentions.append("inline-code-exec")
-        if re.search(r"(?:\bexec|\beval|\bFunction)\b\s*\(?.{0,120}?(?:b64decode|atob|fromhex|unhexlify|decompress|decode_base64|from_base64|base64_decode|FromBase64|Buffer\.from)", code, re.S):
+        if re.search(r"(?:\bos\.system|\bsubprocess\.\w+|\bpopen|\bexecSync|\bspawnSync)\s*\([^\n]{0,160}?(?:b64decode|atob|fromhex|unhexlify|FromBase64|Buffer\.from|codecs\.decode)", code, re.DOTALL):
+            self.a.pipe_exec.append(f"{via} inline code runs decoded text as a command")
+        if re.search(r"(?:\bexec|\beval|\bFunction)\b\s*\(?.{0,120}?(?:b64decode|atob|fromhex|unhexlify|decompress|decode_base64|from_base64|base64_decode|FromBase64|Buffer\.from)", code, re.DOTALL):
             self.a.pipe_exec.append(f"{via} inline code executes decoded text")
         if re.search(r"\b(?:system|popen|exec|execSync|spawn|spawnSync|shell_exec|passthru|run|call|check_output|Popen)\s*\(|child_process", code):
             for lit in re.findall(r"""['"]([^'"\n]{6,300})['"]""", code)[:6]:
@@ -1247,9 +1252,8 @@ class _Walker:
                 upload = True
             if low in ("-x", "--request", "-method", "--method") and i + 1 < len(args) and args[i + 1].text.upper() in ("POST", "PUT", "PATCH", "DELETE"):
                 upload = True
-            if low in ("-o", "--output", "-outfile", "-destination", "-O") or t == "-O":
-                if i + 1 < len(args) and (low != "-o" or cmd != "wget" or True):
-                    outs.append(args[i + 1])
+            if (low in ("-o", "--output", "-outfile", "-destination", "-O") or t == "-O") and i + 1 < len(args):
+                outs.append(args[i + 1])
             if low.startswith("--output="):
                 outs.append(Tok(t.split("=", 1)[1]))
             if low in ("-p", "--directory-prefix") and cmd == "wget" and i + 1 < len(args):
@@ -1331,4 +1335,4 @@ def analyze(command: str, cwd: str, powershell: bool = False) -> Analysis:
     return w.a
 
 
-from . import shell_extra  # noqa: E402 - at the bottom: shell_extra needs this module's names at call time
+from . import shell_cloud, shell_extra  # noqa: E402 - at the bottom: they need this module's names at call time

@@ -63,8 +63,8 @@ class SecondOpinion:
             return would, {"used": False, "why": type(err).__name__}
         except Exception as err:  # noqa: BLE001
             return would, {"used": False, "why": type(err).__name__}
-        p_ok = verdict.answers["consistent"].p_yes
-        level = verdict.answers["suspicion"].level
+        p_ok = verdict.answers["consistent"].p_yes  # type: ignore[union-attr]
+        level = verdict.answers["suspicion"].level  # type: ignore[union-attr]
         info: dict[str, Any] = {"used": True, "p_consistent": round(p_ok, 3), "suspicion": level, "model": getattr(self.judge, "model", "?"),
                                 "tokens": verdict.input_tokens, "ms": verdict.latency_ms}
         if p_ok >= self.policy.judge_downgrade_p and level in ("none", "low"):

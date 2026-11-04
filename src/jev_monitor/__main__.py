@@ -1,4 +1,4 @@
-"""python -m jev_monitor serve [port] | hook | hook-snippet | check TOOL JSON | version | status | mode monitor|enforce | reset | report | policy-check | eval
+"""python -m jev_monitor serve [port] | hook | post-hook | results on|off | hook-snippet | check TOOL JSON | version | status | mode monitor|enforce | reset | report | policy-check | eval
 
 `reset`, `mode` and `status` work on the state file directly, so they work from a plain terminal even when a
 session is latched and the server is busy or gone. `hook` is the entry point for a classic Claude Code
@@ -14,13 +14,13 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from jev_core.config import var_path
+
 from .log import read_records, would_block_report
 from .policy import PolicyError, default_policy_path, load_policy
 from .server import DEFAULT_PORT, HEADER, build_monitor, call_from_body, serve
 from .state import State
 from .types import tool_class
-
-from jev_core.config import var_path
 
 # JEV_MONITOR_VAR overrides; otherwise the shared data folder (JEV_HOME/var, default ~/.jev-toolkit/var).
 VAR = Path(os.environ["JEV_MONITOR_VAR"]) if os.environ.get("JEV_MONITOR_VAR") else var_path()
@@ -59,11 +59,32 @@ def hook_main(stdin_text: str) -> tuple[int, str, str]:
         return 0, "", ""
     if action == "warn":
         return 0, json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": reason}}), ""
-    out = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask" if action == "ask" else "deny", "permissionDecisionReason": reason}}
+    out: dict = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask" if action == "ask" else "deny", "permissionDecisionReason": reason}}
     if action == "kill":
         out["continue"] = False
         out["stopReason"] = reason
     return 0, json.dumps(out), ""
+
+
+def post_hook_main(stdin_text: str) -> tuple[int, str, str]:
+    """Classic PostToolUse hook: checks a tool RESULT (opt-in, see `results`). Never raises; fails open (the text has already been produced)."""
+    try:
+        data = json.loads(stdin_text)
+        resp = data.get("tool_response")
+        text = resp if isinstance(resp, str) else json.dumps(resp, default=str)
+        tool, sess = str(data["tool_name"]), data.get("session_id")
+        body = {"tool": tool, "text": text, "session": sess}
+        d = _post_server("/result", body)
+        if d is None or not d.get("ok", True):
+            d = build_monitor(VAR, with_judge=False).check_text("result", tool, text, sess if isinstance(sess, str) else None)
+    except Exception as err:  # noqa: BLE001
+        return 0, "", f"jev-monitor: result check failed ({type(err).__name__}); not checked.\n"
+    action, reason = d.get("action", "allow"), d.get("reason", "")
+    if action == "block":
+        return 0, json.dumps({"decision": "block", "reason": reason}), ""
+    if action == "warn" and reason:
+        return 0, json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": reason}}), ""
+    return 0, "", ""
 
 
 def _hook_failure(tool: str, why: str) -> tuple[int, str, str]:
@@ -81,7 +102,7 @@ def _hook_failure(tool: str, why: str) -> tuple[int, str, str]:
     return 0, "", f"jev-monitor: check failed for {tool} ({why}); allowed because {tclass} tools fail open here.\n"
 
 
-def main(argv: list[str]) -> int:  # noqa: C901
+def main(argv: list[str]) -> int:
     cmd = argv[0] if argv else ""
     if cmd == "serve":
         try:
@@ -91,12 +112,28 @@ def main(argv: list[str]) -> int:  # noqa: C901
             return 2
         return 0
     if cmd == "hook":
-        code, out, err = hook_main(sys.stdin.read())
+        code, out, errtext = hook_main(sys.stdin.read())
         if out:
             print(out)
-        if err:
-            print(err, end="", file=sys.stderr)
+        if errtext:
+            print(errtext, end="", file=sys.stderr)
         return code
+    if cmd == "post-hook":
+        code, out, errtext = post_hook_main(sys.stdin.read())
+        if out:
+            print(out)
+        if errtext:
+            print(errtext, end="", file=sys.stderr)
+        return code
+    if cmd == "results":
+        st = State(VAR / "monitor-state.json")
+        if len(argv) == 2 and argv[1] in ("on", "off"):
+            st.set_results(argv[1] == "on")
+            print(f"results check: {argv[1]} (tool results and MCP tool descriptions are {'sent to the local monitor and scanned' if argv[1] == 'on' else 'not checked'})")
+            return 0
+        ov = st.results_override()
+        print(f"results check: {'(policy default)' if ov is None else 'on' if ov else 'off'}")
+        return 0
     if cmd == "reset":
         was = State(VAR / "monitor-state.json").reset()
         print("latch cleared." if was else "monitor was not latched (nothing to clear).")
@@ -143,6 +180,7 @@ def main(argv: list[str]) -> int:  # noqa: C901
             return 2
         m = build_monitor(VAR, with_judge=False)
         call = call_from_body({"tool": argv[1], "input": tool_input, "cwd": os.getcwd()})
+        assert call is not None
         print(json.dumps(m.check(call).to_dict(), indent=1))
         return 0
     if cmd == "hook-snippet":

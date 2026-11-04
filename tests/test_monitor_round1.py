@@ -81,7 +81,7 @@ ATTACKS = [
 ]
 
 
-@pytest.mark.parametrize("tool,inp,rule", ATTACKS, ids=[f"{t}:{list(i.values())[0][:40]}" for t, i, _ in ATTACKS])
+@pytest.mark.parametrize("tool,inp,rule", ATTACKS, ids=[f"{t}:{next(iter(i.values()))[:40]}" for t, i, _ in ATTACKS])
 def test_master_attack_is_blocked_under_its_own_rule_id(mon, tool, inp, rule):
     d = mon.run(tool, **inp)
     assert rule in rules_of(d), (rules_of(d), d.reason)
@@ -117,7 +117,7 @@ BENIGN = [
 ]
 
 
-@pytest.mark.parametrize("tool,inp", BENIGN, ids=[f"{t}:{list(i.values())[0][:40]}" for t, i in BENIGN])
+@pytest.mark.parametrize("tool,inp", BENIGN, ids=[f"{t}:{next(iter(i.values()))[:40]}" for t, i in BENIGN])
 def test_master_benign_calls_stay_clean(mon, tool, inp):
     d = mon.run(tool, **inp)
     assert d.would in ("allow", "log"), (d.would, [(f.rule, f.detail) for f in d.findings])

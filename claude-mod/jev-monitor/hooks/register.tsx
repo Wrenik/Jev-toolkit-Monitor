@@ -1,6 +1,6 @@
 import type { Register } from 'claude-code'
 
-import { DEFAULT_TABLE, decide, failureVerdict, inputOf, statusText, updateTable } from './logic'
+import { DEFAULT_TABLE, decide, failureVerdict, hashText, inputOf, resultVerdict, statusText, updateTable } from './logic'
 import type { CheckResponse, FailTable } from './logic'
 
 // jev-monitor: every tool call the AGENT makes goes to the local jev_monitor server before it runs.
@@ -18,6 +18,8 @@ let isStarting = false
 let table: FailTable = { ...DEFAULT_TABLE }
 let lastNote = 'nothing checked yet'
 let mainTurnId: string | null = null
+// MCP tool descriptions already judged (key -> text to show instead, or '' when fine)
+const judgedDescriptions = new Map<string, string>()
 // After spawning the server the first call may arrive before it listens: wait for it once, not on every call.
 let bootWaited = false
 const BOOT_WAIT_MS = 5000
@@ -62,7 +64,7 @@ async function health($: any): Promise<any> {
   try {
     const h = await fetchJson($, '/health', {}, 800)
     if (h?.ok) {
-      table = { mode: h.mode, classModes: h.class_modes ?? {}, fail: { ...DEFAULT_TABLE.fail, ...(h.fail ?? {}) } }
+      table = { mode: h.mode, classModes: h.class_modes ?? {}, fail: { ...DEFAULT_TABLE.fail, ...(h.fail ?? {}) }, results: h.results === true }
       void saveTable($)
     }
     return h
@@ -142,13 +144,29 @@ async function control($: any, path: string, body: object): Promise<any | null> 
   }
 }
 
+// Opt-in (python -m jev_monitor results on): the tool has run; its text is judged before the model reads it.
+async function screenResult($: any, e: any, result: any, note: string): Promise<any> {
+  const extra: string[] = note ? [note] : []
+  if (!result || !('result' in result)) return result
+  if (table.results && typeof result.text === 'string' && result.text) {
+    const rr = await control($, '/result', { tool: String(e.tool), text: result.text })
+    const rv = resultVerdict(String(e.tool), rr)
+    if (rv.kind === 'deny') {
+      $.ui.toast(rv.toast)
+      return { deny: rv.text }
+    }
+    if (rv.kind === 'note') extra.push(rv.text)
+  }
+  return extra.length ? { ...result, context: [...(result.context ?? []), ...extra] } : result
+}
+
 export const register: Register = (on, options) => {
   pythonOption = String((options as any)?.python ?? '')
 
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     await loadTable($)
-    $.command.register({ name: 'jevmonitor', description: 'jev-monitor: status, mode monitor|enforce, allow, reset, report, off|on' })
+    $.command.register({ name: 'jevmonitor', description: 'jev-monitor: status, mode monitor|enforce, allow, reset, report, results on|off, off|on' })
     void ensureServer($)
     return started
   })
@@ -164,11 +182,12 @@ export const register: Register = (on, options) => {
     if ((await $.store.get('off')) === 'yes') return next(e)
     const r = await ask($, e)
     if (r) table = updateTable(table, r)
+    if (r && table.results === undefined) await health($) // the server is up now: learn once whether the result check is on
     const v = decide(String((e as any).tool), r, table)
     lastNote = `${(e as any).tool}: ${r?.action ?? 'no answer'}${r?.rules?.length ? ` [${r.rules.join(',')}]` : ''}`
     if (v.kind === 'pass') {
       if (v.log) $.ui.log(v.log)
-      return next(e)
+      return screenResult($, e, await next(e), '')
     }
     if (v.kind === 'deny' || v.kind === 'kill') {
       $.ui.toast(v.toast)
@@ -182,15 +201,31 @@ export const register: Register = (on, options) => {
       return { deny: v.text }
     }
     if (v.toast) $.ui.toast(v.toast)
-    const result: any = await next(e)
-    if (result && 'result' in result && v.text) return { ...result, context: [...(result.context ?? []), v.text] }
-    return result
+    return screenResult($, e, await next(e) as any, v.text)
   }).catch(($, e, next) => {
     // The hook itself failed. A failed guard is skipped by the engine, so closed classes must be refused here.
     const v = failureVerdict(String((e as any).tool), table)
     if (v.kind === 'deny') return next.called ? next(e) : { deny: v.text }
     return next(e)
   })
+
+  // MCP tool descriptions (opt-in with the result check): a description is text the agent reads and a server wrote.
+  on('tool.describe', async ($, e, next) => {
+    const base: any = await next(e)
+    if (!String((e as any).tool).startsWith('mcp__') || (await $.store.get('off')) === 'yes') return base
+    if (table.results === undefined) await health($) // first render can come before the server is up: then this description goes unchecked
+    if (!table.results) return base
+    const text = String(base?.description ?? (e as any).description ?? '')
+    const key = `${(e as any).tool}:${hashText(text)}`
+    let shown = judgedDescriptions.get(key)
+    if (shown === undefined) {
+      const rv = resultVerdict(String((e as any).tool), await control($, '/describe', { tool: String((e as any).tool), description: text }))
+      if (rv.kind === 'note') $.ui.log(rv.text)
+      shown = rv.kind === 'deny' ? rv.text : ''
+      judgedDescriptions.set(key, shown)
+    }
+    return shown ? { ...base, description: `[jev-monitor withheld the description of ${(e as any).tool}: ${shown}]` } : base
+  }).catch(($, e, next) => next(e))
 
   // Typed prompts: the task intent for the second opinion. Never blocked, never rewritten, sent only to the local server.
   on('prompt.submit', async ($, e, next) => {
@@ -220,6 +255,13 @@ export const register: Register = (on, options) => {
     if (word === 'allow') {
       const r = await control($, '/allow', {})
       return { text: r?.ok ? 'jev-monitor: the last held call is allowed once (logged). Ask Claude to retry exactly that call.' : 'jev-monitor: nothing to allow (no held call, too many overrides, or a critical finding that cannot be overridden).' }
+    }
+    if (word === 'results') {
+      if (arg !== 'on' && arg !== 'off') return { text: `usage: /jevmonitor results on|off   (now: ${table.results ? 'on' : 'off'}; scans tool results and MCP tool descriptions)` }
+      const r = await control($, '/results', { on: arg === 'on' })
+      if (!r?.ok) return { text: `could not reach the monitor server. Run: python -m jev_monitor results ${arg}` }
+      void health($)
+      return { text: `jev-monitor results check: ${arg}${arg === 'on' ? ' (tool results and MCP tool descriptions are now sent to the local monitor; jev_scan is used when installed)' : ''}` }
     }
     if (word === 'report') {
       const r = await control($, '/report', {})

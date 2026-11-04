@@ -1,8 +1,8 @@
 """Step 3: modes, response ladder, kill latch, one-shot allow, judge second opinion, failure policy."""
 
 import pytest
-
 from jev_core import FakeJudge, JudgeUnavailable, RateAnswer, YesNoAnswer
+
 from jev_monitor.engine import Monitor
 from jev_monitor.log import MonitorLog, read_records, would_block_report
 from jev_monitor.policy import Policy, policy_from_dict
@@ -20,7 +20,7 @@ def box(tmp_path, monkeypatch):
 
 
 def make(box, policy=None, judge=None):
-    root, tmp = box
+    _root, tmp = box
     return Monitor(policy or Policy(), State(tmp / "state.json"), MonitorLog(tmp / "log.jsonl"), judge)
 
 
@@ -29,8 +29,8 @@ def call(box, tool="Bash", session="s1", **inp):
     return Call(tool, inp, str(root), str(root), session)
 
 
-ATTACK = dict(command="echo x > CLAUDE.md")
-BENIGN = dict(command="git status")
+ATTACK = {"command": "echo x > CLAUDE.md"}
+BENIGN = {"command": "git status"}
 
 
 def test_default_mode_is_monitor_nothing_is_blocked_but_it_would_have_been(box):
@@ -109,7 +109,7 @@ def test_monitor_mode_never_latches_but_reports_would_kill(box):
 def test_two_critical_findings_kill_even_below_the_block_limit(box):
     pol = policy_from_dict({"mode": "enforce", "ladder": {"kill_after_blocks": 10}})
     m = make(box, pol)
-    c = dict(command="python -m jev_monitor reset")
+    c = {"command": "python -m jev_monitor reset"}
     assert [m.check(call(box, **c)).action for _ in range(2)] == ["block", "kill"]
 
 
@@ -149,7 +149,7 @@ def judge(p_ok, level):
     return FakeJudge(lambda s, q: {"consistent": YesNoAnswer(p_ok), "suspicion": RateAnswer(0, level, 1.0, {level: 1.0})})
 
 
-MEDIUM = dict(tool="WebFetch", url="https://paste.example.net/x")
+MEDIUM = {"tool": "WebFetch", "url": "https://paste.example.net/x"}
 
 
 def test_judge_can_downgrade_a_medium_finding(box):

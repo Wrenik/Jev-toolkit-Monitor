@@ -4,7 +4,7 @@ Same hardening as jev_router / jev_scan: binds to 127.0.0.1 only, every request 
 `X-Jev-Monitor: 1` (a web page cannot add it without a CORS preflight, which this server never
 approves) and a matching Host header (DNS rebinding).
 
-Endpoints: GET /health, GET /status, POST /check, POST /intent, POST /mode, POST /reset, POST /allow, POST /report,
+Endpoints: GET /health, GET /status, POST /check, POST /result, POST /describe, POST /results, POST /intent, POST /mode, POST /reset, POST /allow, POST /report,
 POST /shutdown. The control endpoints (mode, reset, allow) are the user's; the monitor-tamper rule flags a
 tool call that tries to reach them, but a determined agent with a shell could still find a way (see docs).
 """
@@ -26,14 +26,14 @@ from jev_core.localserver import GuardedHandler
 
 from .engine import Monitor
 from .log import MonitorLog, read_records, would_block_report
-from .policy import PolicyError, default_policy_path, load_policy
+from .policy import default_policy_path, load_policy
 from .rules import MONITOR_PORT
 from .state import State
 from .types import CLASSES, Call, tool_class
 
 DEFAULT_PORT = MONITOR_PORT
 HEADER = "X-Jev-Monitor"
-MAX_BODY_BYTES = 4_000_000
+MAX_BODY_BYTES = 4_000_000  # a tool result can be large; the policy's results.max_chars bounds what is scanned
 _SOURCE_DIRS = [Path(__file__).parent, Path(jev_core.__file__).parent]
 
 
@@ -67,7 +67,7 @@ def call_from_body(body: dict[str, Any]) -> Call | None:
     cwd = body.get("cwd") if isinstance(body.get("cwd"), str) and body.get("cwd") else os.getcwd()
     root = body.get("root") if isinstance(body.get("root"), str) and body.get("root") else cwd
     sess, agent = body.get("session"), body.get("agent_id")
-    return Call(tool, inp, cwd, root, sess if isinstance(sess, str) else None, agent if isinstance(agent, str) else None)
+    return Call(tool, inp, str(cwd), str(root), sess if isinstance(sess, str) else None, agent if isinstance(agent, str) else None)
 
 
 def health_payload(m: Monitor, started: str) -> dict[str, Any]:
@@ -79,6 +79,7 @@ def health_payload(m: Monitor, started: str) -> dict[str, Any]:
         "fail": {c: m.policy.fail_for(c) for c in CLASSES},
         "latched": m.state.latch() is not None,
         "judge": m.second.judge.name if m.second else None,
+        "results": m.results_enabled(),
         "code_version": started,
         "stale": code_version() != started,
     }
@@ -91,7 +92,7 @@ def make_handler(m: Monitor, var_dir: Path) -> type[BaseHTTPRequestHandler]:
         HEADER = HEADER
         MAX_BODY_BYTES = MAX_BODY_BYTES
 
-        def do_GET(self) -> None:  # noqa: N802
+        def do_GET(self) -> None:
             if self.path not in ("/health", "/status"):
                 self._send(404, {"ok": False})
             elif self._allowed():
@@ -100,7 +101,7 @@ def make_handler(m: Monitor, var_dir: Path) -> type[BaseHTTPRequestHandler]:
                     payload["state"] = m.state.snapshot()
                 self._send(200, payload)
 
-        def do_POST(self) -> None:  # noqa: N802
+        def do_POST(self) -> None:
             raw = self._read_body()
             if raw is None or not self._allowed():
                 return
@@ -119,6 +120,22 @@ def make_handler(m: Monitor, var_dir: Path) -> type[BaseHTTPRequestHandler]:
                         self._send(200, {"ok": False, "error": "tool and input required", "class": tool_class(str(body.get("tool", "")))})
                         return
                     self._send(200, m.check(call).to_dict())
+                elif path in ("/result", "/describe"):
+                    tool = body.get("tool")
+                    text = body.get("text" if path == "/result" else "description")
+                    if not isinstance(tool, str) or not isinstance(text, str):
+                        self._send(200, {"ok": False, "error": "tool and text required"})
+                        return
+                    sess = body.get("session") if isinstance(body.get("session"), str) else None
+                    self._send(200, m.check_text("result" if path == "/result" else "description", tool, text, sess))
+                elif path == "/results":
+                    on = body.get("on")
+                    if not isinstance(on, bool):
+                        self._send(400, {"ok": False, "error": "on must be true or false"})
+                        return
+                    m.state.set_results(on)
+                    m.log.event("results_switch", on=on, by="user")
+                    self._send(200, {"ok": True, "results": on})
                 elif path == "/intent":
                     text = body.get("text")
                     if isinstance(text, str) and text.strip():

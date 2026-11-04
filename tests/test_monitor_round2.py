@@ -96,5 +96,16 @@ def test_lookalikes_stay_quiet(mon, tool, cmd):
 
 
 def test_editor_auto_run_files_are_startup_files(mon):
-    for rel in (".vscode/tasks.json", ".vscode/settings.json", ".vscode/launch.json"):
+    for rel in (".vscode/tasks.json", ".vscode/launch.json"):
         assert "persistence-file" in rules_of(mon.run("Edit", file_path=str(mon.root / rel), old_string="a", new_string="b")), rel
+
+
+def test_vscode_settings_are_judged_by_content(mon):
+    # since round 3: ordinary preferences pass, keys that run programs (and any shell redirect) do not
+    f = str(mon.root / ".vscode/settings.json")
+    assert "persistence-file" not in rules_of(mon.run("Edit", file_path=f, old_string="a", new_string='"editor.formatOnSave": true'))
+    assert "persistence-file" in rules_of(mon.run("Edit", file_path=f, old_string="a", new_string='"terminal.integrated.shellArgs.windows": ["-c", "x"]'))
+
+
+def test_vscode_settings_shell_redirect_is_still_flagged(mon):
+    assert "persistence-file" in rules_of(mon.run("Bash", command="echo '{}' > .vscode/settings.json"))

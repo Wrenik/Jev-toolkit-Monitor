@@ -34,7 +34,7 @@ _SWEEPERS = {"find", "grep", "egrep", "fgrep", "rg", "ag", "fd", "locate", "get-
 
 
 # ---------------------------------------------------------------------------------------------------------------
-def read_script(w: "_Walker", raw: str) -> tuple[str, str] | None:
+def read_script(w: _Walker, raw: str) -> tuple[str, str] | None:
     """(text, path) of a small readable text file, or None. Counts against a shared byte budget."""
     path = raw.replace("\\", "/")
     full = os.path.expanduser(path) if path.startswith("~") else (path if os.path.isabs(path) or re.match(r"^[A-Za-z]:/", path) else os.path.join(w.cwd or ".", path))
@@ -52,10 +52,10 @@ def read_script(w: "_Walker", raw: str) -> tuple[str, str] | None:
     return head.decode("utf-8", errors="replace"), full
 
 
-def analyse_text(w: "_Walker", text: str, kind: str, label: str) -> None:
+def analyse_text(w: _Walker, text: str, kind: str, label: str) -> None:
     """Analyse script text as `kind` (sh, ps, code) in a child walker. Findings about unknowns (opaque) are dropped: a script's
     `$1` or `$(dirname $0)` is not the agent's problem, and reporting it would make every build script a false alarm."""
-    from .shell import _Walker  # noqa: PLC0415 - circular at import time
+    from .shell import _Walker
 
     if w.depth >= 3:
         return
@@ -69,7 +69,7 @@ def analyse_text(w: "_Walker", text: str, kind: str, label: str) -> None:
     w.a.mentions.append(f"script:{label}")
 
 
-def run_file(w: "_Walker", raw: str, interp: str | None) -> bool:
+def run_file(w: _Walker, raw: str, interp: str | None) -> bool:
     """`bash x.sh`, `python x.py`, `./x.sh`: read the file and analyse it; a missing/binary program in a temp or download folder is a finding."""
     got = read_script(w, raw)
     norm = raw.replace("\\", "/")
@@ -89,7 +89,7 @@ def run_file(w: "_Walker", raw: str, interp: str | None) -> bool:
     return True
 
 
-def _package_scripts(w: "_Walker", names: list[str]) -> None:
+def _package_scripts(w: _Walker, names: list[str]) -> None:
     got = read_script(w, "package.json")
     if got is None:
         return
@@ -136,7 +136,7 @@ def _make_recipes(text: str, targets: list[str]) -> list[str]:
     return out
 
 
-def script_runners(w: "_Walker", cmd: str, args: list["Tok"], pos: list["Tok"]) -> None:
+def script_runners(w: _Walker, cmd: str, args: list[Tok], pos: list[Tok]) -> None:
     """Interpreter + file, package-manager scripts, make."""
     if cmd in _SHELL_INTERP | _PS_INTERP | _CODE_INTERP:
         files = [a for a in pos if not a.dyn]
@@ -166,16 +166,16 @@ def script_runners(w: "_Walker", cmd: str, args: list["Tok"], pos: list["Tok"]) 
                 break
 
 
-def direct_exec(w: "_Walker", head: "Tok") -> None:
+def direct_exec(w: _Walker, head: Tok) -> None:
     """The command word itself is a path (`./x.sh`, `/tmp/p`, `C:\\x\\y.exe`)."""
     text = w.sub(head).text
-    if head.dyn or not re.match(r"^(?:\.{1,2}[/\\]|/|~[/\\]|[A-Za-z]:[/\\]|\$(?:env:)?(?:temp|tmp|tmpdir|home)\b|%temp%)", text, re.I):
+    if head.dyn or not re.match(r"^(?:\.{1,2}[/\\]|/|~[/\\]|[A-Za-z]:[/\\]|\$(?:env:)?(?:temp|tmp|tmpdir|home)\b|%temp%)", text, re.IGNORECASE):
         return
     run_file(w, text, None)
 
 
 # ---------------------------------------------------------------------------------------------------------------
-def _flat(args: list["Tok"], w: "_Walker") -> list[str]:
+def _flat(args: list[Tok], w: _Walker) -> list[str]:
     return [w.sub(a).text for a in args]
 
 
@@ -194,7 +194,7 @@ def _install_names(texts: list[str], value_flags: set[str]) -> list[str]:
     return [n for n in out if n]
 
 
-def catalogue(w: "_Walker", cmd: str, args: list["Tok"], pos: list["Tok"], seg) -> None:  # noqa: C901 - a table of command shapes
+def catalogue(w: _Walker, cmd: str, args: list[Tok], pos: list[Tok], seg) -> None:
     texts = _flat(args, w)
     low = [t.lower() for t in texts]
     joined = " ".join(low)
@@ -314,7 +314,9 @@ def catalogue(w: "_Walker", cmd: str, args: list["Tok"], pos: list["Tok"], seg) 
                 a.medium.append(("unvetted-package-run", f"{cmd} downloads and runs {n!r}, which is not a well-known tool"))
 
 
-def note_assignment(w: "_Walker", key: str, value: str) -> None:
+def note_assignment(w: _Walker, key: str, value: str) -> None:
     """Variables that send an AI client's or the shell's traffic somewhere else; the checker decides if the host is trusted."""
+    if key.upper() in ("HISTFILE", "HISTSIZE", "HISTFILESIZE") and value in ("", "/dev/null", "0"):
+        w.a.medium.append(("log-tamper", "shell history is switched off for this session"))
     if catalog.REDIRECT_VARS.match(key) and value:
         w.a.mentions.append(f"redirect-var:{key}={value}")

@@ -6,21 +6,25 @@ then scope, outbound traffic, secret exfiltration shape, exploitable shell shape
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 import os
 import re
 import tempfile
 import time
-from functools import lru_cache
 from collections import defaultdict, deque
+from functools import lru_cache
 
-from . import catalog, paths
+from . import catalog, configscan, paths
 from .policy import SECRET_EXEMPT_GLOBS, Policy
 from .shell import NET_COMMANDS, Analysis, analyze, host_of, urls_in
 from .types import CRITICAL, HIGH, LOW, MEDIUM, Call, Finding, tool_class
 
 MONITOR_PORT = 8767
+TAINT_PER_SESSION = 32
+TAINT_SESSIONS = 256
+_EDIT_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 DEFAULT_CANARY = re.compile(r"JEVCANARY-[A-Za-z0-9]{6,}")
 _PERSISTENCE = [
     "~/.bashrc", "~/.bash_profile", "~/.bash_login", "~/.bash_logout", "~/.profile", "~/.zshrc", "~/.zprofile", "~/.zshenv", "~/.zlogin",
@@ -40,6 +44,8 @@ _TAMPER_CMD = re.compile(
 _LOG_FILES = ["**/.bash_history", "**/.zsh_history", "**/.history", "**/ConsoleHost_history.txt", "/var/log/**", "c:/windows/system32/winevt/**"]
 _PKG_CONF = {".npmrc", ".yarnrc", ".yarnrc.yml", ".pnpmrc", "pip.conf", "pip.ini", ".pypirc", ".condarc", "nuget.config", "settings.xml", "uv.toml", ".bunfig.toml", "bunfig.toml", ".gemrc"}
 _METADATA_WORD = re.compile(r"(?i)169\.254\.\d{1,3}\.\d{1,3}|fd00:ec2::254|metadata\.google\.internal|100\.100\.100\.200")
+_HISTORY_READ = re.compile(r"(?i)HistorySavePath|ConsoleHost_history")
+_PROC_ENV = re.compile(r"/proc/(?:self|\d+|\*)/environ")
 _ENV_DUMP = {"env", "printenv", "get-childitem", "gci", "dir", "ls"}
 _METADATA = {"169.254.169.254", "169.254.170.2", "fd00:ec2::254", "metadata.google.internal", "metadata", "100.100.100.200", "metadata.azure.com",
              "instance-data", "instance-data.ec2.internal", "metadata.tencentyun.com", "metadata.platformequinix.com", "metadata.packet.net"}
@@ -66,7 +72,7 @@ def ip_kind(host: str) -> str:
         ip = ipaddress.ip_address(h)
     except ValueError:
         return "none"
-    if getattr(ip, "ipv4_mapped", None):
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
         ip = ip.ipv4_mapped  # [::ffff:169.254.169.254] is the same address as 169.254.169.254
     if ip.is_loopback or str(ip) == "0.0.0.0":
         return "loopback"
@@ -93,6 +99,8 @@ class Tracker:
         self.events: dict[str, deque] = defaultdict(deque)  # session -> (ts, bytes, host|None)
         self.blocks: dict[str, deque] = defaultdict(deque)  # session -> ts of enforced-or-would-be blocks
         self.criticals: dict[str, deque] = defaultdict(deque)
+        # session -> {hash of a secret file's path (or of a secret literal): time it was read}. Hashes only, 32 per session, 256 sessions.
+        self.taint: dict[str, dict[str, float]] = {}
 
     def record(self, session: str | None, nbytes: int, hosts: list[str], policy: Policy, now: float | None = None) -> list[Finding]:
         now = time.time() if now is None else now
@@ -110,6 +118,22 @@ class Tracker:
         if len(distinct) > policy.rate_max_hosts:
             out.append(Finding("rate-hosts", MEDIUM, f"{len(distinct)} distinct hosts in {policy.rate_window_s}s (limit {policy.rate_max_hosts})"))
         return out
+
+    def taint_add(self, session: str | None, what: str, now: float) -> None:
+        key = hashlib.sha256(what.encode("utf-8", "replace")).hexdigest()[:12]
+        sess = self.taint.setdefault(session or "-", {})
+        sess.pop(key, None)
+        sess[key] = now
+        while len(sess) > TAINT_PER_SESSION:
+            sess.pop(next(iter(sess)))
+        while len(self.taint) > TAINT_SESSIONS:
+            self.taint.pop(next(iter(self.taint)))
+
+    def taint_live(self, session: str | None, now: float, window: int) -> list[float]:
+        sess = self.taint.get(session or "-", {})
+        for k in [k for k, ts in sess.items() if ts < now - window]:
+            del sess[k]
+        return list(sess.values())
 
     def note(self, store: dict[str, deque], session: str | None, window: int, now: float | None = None) -> int:
         now = time.time() if now is None else now
@@ -232,6 +256,7 @@ class _Checker:
         self.temps = list(_temp_roots())
         self.extras = [paths.canon(d, call.cwd).path for d in policy.extra_write_dirs]
         self.secret_touch = False
+        self._secret_keys: set[str] = set()
         self.hosts: list[str] = []
         self.net_present = False
         self.published = False
@@ -242,6 +267,11 @@ class _Checker:
         if (f.rule, key) not in self._seen:
             self._seen.add((f.rule, key))
             self.findings.append(f)
+
+    def touch(self, key: str) -> None:
+        self.secret_touch = True
+        if len(self._secret_keys) < 8:
+            self._secret_keys.add(key)
 
     def classify(self, raw: str, cwd: str) -> paths.Canon:
         return paths.canon(raw, cwd or self.call.cwd)
@@ -259,7 +289,7 @@ class _Checker:
             self.findings.append(Finding("opaque-shell", HIGH, "the shell command is missing or not text, so it cannot be checked", opaque=True))
         elif tool_class(call.tool) == "other":
             self.findings.append(Finding("unknown-tool", LOW, f"tool {call.tool[:40]!r} is not one the monitor knows (logged, not judged)"))
-        for section in (self._opaque, self._file_ops, self._shell_words, self._canary_tokens, self._monitor_tamper, self._outbound, self._shell_shapes, self._content_checks, self._combos):
+        for section in (self._opaque, self._file_ops, self._shell_words, self._canary_tokens, self._monitor_tamper, self._outbound, self._shell_shapes, self._content_checks, self._combos, self._taint):
             section()
         self.findings.extend(self.tracker.record(call.session, _written_bytes(call), self.hosts, self.policy, self.now))
         return self.findings
@@ -284,7 +314,7 @@ class _Checker:
             elif kind in ("write", "delete"):
                 self._write_op(kind, raw, p, via, recursive, label)
             elif kind == "read" and _is_secret(p, self.policy):
-                self.secret_touch = True
+                self.touch(p)
                 self.once(Finding("secret-file-access", MEDIUM, f"{via} reads a likely secret file ({label})"), p)
 
     def _write_op(self, kind: str, raw: str, p: str, via: str, recursive: bool, label: str) -> None:
@@ -303,19 +333,24 @@ class _Checker:
         hit = paths.matches_any(p, policy.instruction_files)
         if hit is None and (kind == "delete" or recursive):
             hit = _ancestor_hit(p, root, home, policy)
+        if hit is not None and via in _EDIT_TOOLS and kind == "write" and configscan.is_mcp_config(p) and configscan.mcp_servers_benign(self._written_text(), lambda h: host_allowed(h, policy) or ip_kind(h) == "loopback"):
+            once(Finding("mcp-config-change", MEDIUM, f"{via} edits an MCP server list ({label}); every server is a well-known package or a trusted host"), p)
+            return
         if hit is not None:
             once(Finding("instruction-file-change", HIGH, f"{via} {'deletes' if kind == 'delete' else 'writes'} an instruction file ({label}, matches {hit})",
                          "Instruction files steer the agent; change them yourself."), p)
             return
         if paths.matches_any(p, _LOG_FILES):
             once(Finding("log-tamper", HIGH, f"{via} changes a shell history or system log file ({label})"), p)
-        elif paths.matches_any(p, _PERSISTENCE) or paths.matches_any(p + "/", _PERSISTENCE) or paths.matches_any(re.sub(r"^[a-z]:", "", p), [x for x in _PERSISTENCE if x.startswith("/")]):
+        elif self._persistence_hit(p, via):
             once(Finding("persistence-file", HIGH, f"{via} writes a startup/system file ({label})"), p)
         elif not (paths.under(p, root) or any(paths.under(p, t) for t in self.temps + self.extras)):
             sev = HIGH if kind == "delete" and recursive else MEDIUM
             once(Finding("write-outside-scope", sev, f"{via} {kind}s outside the project ({label})", "Add the folder to [scope] extra_write_dirs."), p)
         if via in ("chmod", "chown", "chgrp") and recursive and not paths.under(p, root):
             once(Finding("destructive-permission-change", HIGH, f"{via} -R changes permissions or owners outside the project ({label})"), p)
+        if kind == "write" and via in _EDIT_TOOLS:
+            self._config_contents(p, via, label)
         if kind == "write" and catalog.CI_FILES.search(p):
             text = "\n".join(_strings({k: v for k, v in self.call.input.items() if k != "file_path"}))
             if catalog.CI_RISK.search(text):
@@ -325,6 +360,37 @@ class _Checker:
                 if not host_allowed(h, policy) and ip_kind(h) != "loopback":
                     once(Finding("supply-chain-source", HIGH, f"{via} points the package manager config ({os.path.basename(p)}) at unlisted source {h}",
                                  "Add the host to [network] allow_hosts if you trust it."), h)
+
+    def _written_text(self) -> str:
+        return "\n".join(_strings({k: v for k, v in self.call.input.items() if k not in ("file_path", "notebook_path", "path", "old_string")}))
+
+    def _persistence_hit(self, p: str, via: str) -> bool:
+        hit = (paths.matches_any(p, _PERSISTENCE) or paths.matches_any(p + "/", _PERSISTENCE)
+               or paths.matches_any(re.sub(r"^[a-z]:", "", p), [x for x in _PERSISTENCE if x.startswith("/")]))
+        if hit and p.endswith("/.vscode/settings.json") and via in _EDIT_TOOLS:  # ordinary editor preferences are fine; keys that run programs are not
+            return bool(configscan.VSCODE_RISK.search(self._written_text()))
+        return bool(hit)
+
+    def _config_contents(self, p: str, via: str, label: str) -> None:
+        """Files that hold commands for later (package scripts, dev-container hooks, pre-commit entries, CI, compose): the commands
+        inside go through the same analysis a typed command gets."""
+        kind = configscan.classify(p)
+        if kind is None:
+            return
+        text = self._written_text()
+        if kind == "compose":
+            if m := configscan.COMPOSE_RISK.search(text):
+                self.once(Finding("container-config-risk", MEDIUM, f"{via} writes a compose file ({label}) that gives a container host-level access ({m.group(0).strip()[:40]})"), p)
+            return
+        strong = {"remote-code-exec", "secret-exfil-shape", "secret-literal-egress", "persistence-command", "destructive-system", "destructive-delete",
+                  "security-setting-change", "container-escape", "secret-harvest", "agent-permission-bypass", "agent-config-change", "outbound-raw-ip", "ssrf-metadata"}
+        for cmd, uncapped in configscan.commands(kind, text):
+            sub = _Checker(Call("Bash", {"command": cmd}, self.call.cwd, self.call.root, None), self.policy, Tracker(), None, self.now).run()
+            for f in sub:
+                if f.opaque or f.severity < MEDIUM or f.rule in ("rate-calls", "rate-write-volume", "rate-hosts", "secret-file-access", "credential-store-read", "write-outside-scope"):
+                    continue
+                sev = f.severity if (uncapped or f.rule in strong) else min(f.severity, MEDIUM)
+                self.once(Finding("config-runs-risky-command", sev, f"{via} writes {label}, which contains a command that raises [{f.rule}]: {f.detail[:100]}"), f.rule + cmd[:40])
 
     def _shell_words(self) -> None:
         """Literal path-like words in a shell command: canary and secret paths. Secret-named variables count as a secret touch too."""
@@ -340,19 +406,22 @@ class _Checker:
             if paths.matches_any(c.path, self.policy.canary_paths):
                 self.once(Finding("canary-touched", CRITICAL, f"command mentions a canary file ({w[:60]})"), c.path)
             elif _is_secret(c.path, self.policy):
-                self.secret_touch = True
+                self.touch(c.path)
                 self.once(Finding("secret-file-access", MEDIUM, f"command touches a likely secret file ({w[:60]})"), c.path)
         for why in a.cred:
-            self.secret_touch = True
+            self.touch(why)
             self.once(Finding("credential-store-read", MEDIUM, why), why)
         if a.archives or a.publish:  # copying or publishing a whole secret folder (`cp -r ~/.ssh`, `rclone copy ~/.aws`)
             for w in a.words[:150]:
                 if re.search(r"[/\.~]", w):
                     c = self.classify(w, self.call.cwd)
                     if not c.ambiguous and (_is_secret(c.path + "/x", self.policy) or _is_secret(c.path, self.policy)):
-                        self.secret_touch = True
+                        self.touch(c.path)
         if any(cmd in ("printenv", "env-dump") for cmd in a.commands) or any(m.startswith("secret-var:") for m in a.mentions):
-            self.secret_touch = True
+            self.touch("environment")
+        if self.call.tool in ("Bash", "PowerShell") and (m := _HISTORY_READ.search(self.blob) or _PROC_ENV.search(self.blob)):
+            self.touch(m.group(0).lower())
+            self.once(Finding("secret-file-access", MEDIUM, f"command reads shell history or another process's environment ({m.group(0)[:40]})"), "histread")
 
     def _canary_tokens(self) -> None:
         for tok in self.policy.canary_tokens:
@@ -484,6 +553,11 @@ class _Checker:
             once(Finding("secret-literal-egress", HIGH, f"a secret-looking literal ({m.group(0)[:6]}...) appears in a call that reaches an unlisted host or publishes data"), "literal")
         if a is None:
             return
+        if not a.pipe_exec and (m := catalog.DROPPER_TEXT.search(blob)):
+            targets = [o.target for o in a.ops if o.kind == "write"]
+            if targets:
+                script = any("." not in os.path.basename(x) or x.lower().endswith(catalog.SCRIPT_EXT) for x in targets)
+                once(Finding("remote-code-exec", HIGH if script else MEDIUM, f"a download-and-run line is written into {os.path.basename(targets[0])[:40]}, to be run later"), "dropper")
         secret_text = bool(catalog.SECRET_TEXT.search(blob)) or self.secret_touch
         if a.archives and secret_text:
             stage = catalog.STAGE_TEXT.search(blob) or any(o.kind == "write" and not self._in_scope(o.target, o.cwd) for o in a.ops)
@@ -492,6 +566,36 @@ class _Checker:
         if a.sweeps and any(w in ("/", "~") or re.fullmatch(r"[A-Za-z]:[\/]?|/home|/Users|\$HOME", w) for w in a.words) and catalog.SECRET_PATTERN.search(blob):
             heavy = a.archives or any(c in ("xargs", "nested") for c in a.commands) or any(o.kind == "write" for o in a.ops)
             once(Finding("secret-sweep", HIGH if heavy else MEDIUM, "a search over the whole disk or home folder for key, token or credential files" + (", with the hits copied or saved" if heavy else "")), "sweep")
+
+    def _egress(self) -> str:
+        """The command that sends data out, even to a trusted host: a publishing command or an upload. Plain git and loopback do not count."""
+        a = self.a
+        if a is None:
+            return ""
+        if a.publish:
+            return a.publish[0]
+        for o in a.ops:
+            if o.kind == "net" and o.upload and not o.via.startswith("git ") and ip_kind(o.target) != "loopback" and o.target not in ("localhost", ""):
+                return o.via
+        return ""
+
+    def _taint(self) -> None:
+        """Cross-call memory: reading a secret file marks the session (hash of the path, in RAM, bounded); a later upload or publish,
+        even to a trusted host, is a warning. A call that reads and sends in one go is already `secret-exfil-shape`."""
+        now = self.now if self.now is not None else time.time()
+        sess = self.call.session
+        via = self._egress()
+        if self.secret_touch and not self.net_present:
+            for key in self._secret_keys:
+                self.tracker.taint_add(sess, key, now)
+            if via:  # read and sent in one command, to a host that is trusted: not the exfil shape, but not nothing
+                self.once(Finding("taint-egress", MEDIUM, f"{via} sends data out in the same command that reads a secret"), "taint-same")
+            return
+        if via:
+            live = self.tracker.taint_live(sess, now, self.policy.taint_window_s)
+            if live:
+                age = max(0, int((now - max(live)) / 60))
+                self.once(Finding("taint-egress", MEDIUM, f"{via} sends data out, and {len(live)} secret file(s) were read earlier in this session (last {age} min ago)"), "taint")
 
     def _in_scope(self, target: str, cwd: str) -> bool:
         c = self.classify(target, cwd)
@@ -524,7 +628,7 @@ def _ancestor_hit(p: str, root: str, home: str, policy: Policy) -> str | None:
     for pat in policy.instruction_files:
         if any(ch in pat for ch in "*?["):
             base = pat.split("/**")[0]
-            base = base[:-1] if base.endswith("/") else base
+            base = base.removesuffix("/")
             if base and not any(ch in base for ch in "*?["):
                 candidates.append((pat, base))
         else:
@@ -534,6 +638,6 @@ def _ancestor_hit(p: str, root: str, home: str, policy: Policy) -> str | None:
             cp = paths.canon(rel if rel.startswith("~") else anchor + "/" + rel, anchor, resolve=False).path
             if paths.under(cp, p):
                 return pat
-    if p == root or p == home:
+    if p in (root, home):
         return "the project/home folder"
     return None

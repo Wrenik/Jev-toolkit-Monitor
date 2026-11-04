@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { DEFAULT_TABLE, decide, failureVerdict, inputOf, modeFor, toolClass, updateTable } from './logic'
+import { DEFAULT_TABLE, decide, failureVerdict, hashText, inputOf, modeFor, resultVerdict, toolClass, updateTable } from './logic'
 import type { FailTable } from './logic'
 
 const enforcing: FailTable = { ...DEFAULT_TABLE, mode: 'enforce' }
@@ -58,4 +58,17 @@ test('a hook failure is decided from the table alone', async () => {
   expect(failureVerdict('Bash', enforcing).kind).toBe('deny')
   expect(failureVerdict('Read', enforcing).kind).toBe('pass')
   expect(failureVerdict('Bash', DEFAULT_TABLE).kind).toBe('pass')
+})
+
+test('a result verdict can only withhold or note; a missing or skipped answer passes', async () => {
+  expect(resultVerdict('Bash', null)).toEqual({ kind: 'pass' })
+  expect(resultVerdict('Bash', { ok: true, skipped: true, action: 'allow' })).toEqual({ kind: 'pass' })
+  expect(resultVerdict('Bash', { ok: true, action: 'block', reason: 'x' }).kind).toBe('deny')
+  expect(resultVerdict('Bash', { ok: true, action: 'warn', reason: 'x' }).kind).toBe('note')
+  expect(resultVerdict('Bash', { ok: true, action: 'warn' }).kind).toBe('pass')
+})
+
+test('the description hash changes with the text', async () => {
+  expect(hashText('abc')).toBe(hashText('abc'))
+  expect(hashText('abc')).not.toBe(hashText('abd'))
 })

@@ -11,7 +11,7 @@ import pytest
 from jev_monitor import __main__ as cli
 from jev_monitor.engine import Monitor
 from jev_monitor.log import MonitorLog
-from jev_monitor.policy import Policy, policy_from_dict
+from jev_monitor.policy import Policy
 from jev_monitor.server import HEADER, build_monitor, make_handler
 from jev_monitor.state import State
 
@@ -97,7 +97,7 @@ def hook(tmp_path, monkeypatch, payload, mode="enforce"):
 
 def test_classic_hook_deny_and_allow(tmp_path, monkeypatch):
     base = {"cwd": str(tmp_path), "session_id": "s"}
-    code, out, err = hook(tmp_path, monkeypatch, {**base, "tool_name": "Bash", "tool_input": {"command": "echo x > CLAUDE.md"}})
+    code, out, _err = hook(tmp_path, monkeypatch, {**base, "tool_name": "Bash", "tool_input": {"command": "echo x > CLAUDE.md"}})
     o = json.loads(out)
     assert code == 0 and o["hookSpecificOutput"]["permissionDecision"] == "deny"
     code, out, _ = hook(tmp_path, monkeypatch, {**base, "tool_name": "Bash", "tool_input": {"command": "git status"}})
@@ -118,7 +118,7 @@ def test_classic_hook_garbage_input_fails_closed_only_when_enforcing(tmp_path, m
     (tmp_path / "var").mkdir(exist_ok=True)
     State(tmp_path / "var" / "monitor-state.json").set_mode("enforce")
     assert cli.hook_main("{not json")[0] == 0  # tool unknown -> class 'other' -> fail open (with a stderr line)
-    code, out, err = cli.hook_main(json.dumps({"tool_name": "Bash", "tool_input": "not-a-dict-at-all"}))
+    code, _out, err = cli.hook_main(json.dumps({"tool_name": "Bash", "tool_input": "not-a-dict-at-all"}))
     assert code == 2 and "fail closed" in err
     State(tmp_path / "var" / "monitor-state.json").set_mode("monitor")
     assert cli.hook_main(json.dumps({"tool_name": "Bash", "tool_input": "x"}))[0] == 0

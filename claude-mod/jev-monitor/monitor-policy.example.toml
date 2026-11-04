@@ -1,0 +1,68 @@
+# jev-monitor policy. Copy to <JEV_HOME>/var/monitor-policy.toml (default ~/.jev-toolkit/var/) (or point JEV_MONITOR_POLICY at it) and change single values.
+# Everything here is optional: the built-in defaults are what you get without a file. A BROKEN file is an error, never a
+# silent fall-back to something weaker (`python -m jev_monitor policy-check` validates it).
+
+# monitor = log + warn only, nothing is blocked (the default, so you can watch it for a week).
+# enforce = act on the ladder. `/jevmonitor mode ...` or `python -m jev_monitor mode ...` overrides this without editing the file.
+mode = "monitor"
+
+# Per tool class: its own mode (beats the global one) and what happens when the monitor itself fails.
+# fail = "closed": the call is refused (only while that class is enforcing). fail = "open": allowed, with a log line.
+[classes.shell]
+# mode = "enforce"        # e.g. enforce only for shell commands while everything else stays in monitor mode
+fail = "closed"
+[classes.write]
+fail = "closed"
+[classes.network]
+fail = "closed"
+[classes.mcp]
+fail = "closed"
+[classes.agent]
+fail = "closed"
+[classes.read]
+fail = "open"
+
+[protected]
+# Replace a list to change it. Relative patterns match at any depth; `~/` is your home; `**` crosses folders.
+# instruction_files = ["CLAUDE.md", ".claude/**", "~/.claude/**", ".mcp.json"]
+# secret_files = [".env", ".env.*", "~/.ssh/**", "~/.aws/**"]
+# Set true ONLY while developing the monitor itself (otherwise its code is protected like the rest of its files).
+dev_mode = false
+
+[scope]
+# Writes outside the project root and the temp folder are flagged; list extra folders the agent may write to.
+extra_write_dirs = []
+
+[network]
+# Hosts (and their subdomains) the agent may reach without a flag. Replaces the built-in list, so keep what you need.
+# allow_hosts = ["localhost", "127.0.0.1", "github.com", "pypi.org", "docs.python.org"]
+
+[canary]
+# A decoy file or token that nothing legitimate ever touches. Any touch is critical.
+paths = []       # e.g. ["**/passwords-backup.txt"]
+tokens = []      # e.g. ["JEVCANARY-7f3a91c2"]  (strings starting JEVCANARY- are always treated as canaries)
+
+[rate]
+window_s = 60
+max_calls = 150
+max_write_bytes = 3000000
+max_hosts = 10
+
+[ladder]
+# What each severity does. Allowed: log, warn, ask, block.  ("ask" holds the call; /jevmonitor allow lets that exact call through once.)
+low = "log"
+medium = "warn"
+high = "block"
+critical = "block"
+opaque_action = "ask"   # the command cannot be understood statically (computed target, eval of a variable, ...)
+kill_after_blocks = 3   # kill = abort the turn and refuse every tool call until reset. Needs this many blocks...
+kill_window_s = 600     # ...inside this many seconds, or a second critical finding.
+latch_minutes = 15      # the latch expires by itself; `python -m jev_monitor reset` clears it from a terminal.
+
+[judge]
+# Jev as a second opinion on medium (inconclusive) findings only. It never sees high/critical ones and never lowers them.
+enabled = true
+timeout_s = 3.0
+deadline_s = 3.5
+downgrade_p = 0.9   # P(call fits the task) at or above this + low suspicion -> log only
+upgrade_p = 0.2     # P(call fits the task) at or below this + high suspicion -> the "high" action

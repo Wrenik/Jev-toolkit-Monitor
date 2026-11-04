@@ -1,0 +1,14 @@
+{
+  "name": "jev-toolkit-monitor",
+  "description": "EXPERIMENTAL Claude Code mod that watches the agent's own tool calls and flags or blocks risky ones.",
+  "owner": {
+    "name": "Henric"
+  },
+  "plugins": [
+    {
+      "name": "jev-monitor",
+      "source": "./claude-mod/jev-monitor",
+      "description": "EXPERIMENTAL. Watches the agent's own tool calls (never your typing): edits to its instruction files, writes outside the project, unlisted network targets and other risky shapes. Starts in monitor mode (log and warn only). Reduces risk; does not make an agent safe. Needs the jev-toolkit-monitor Python package installed."
+    }
+  ]
+}

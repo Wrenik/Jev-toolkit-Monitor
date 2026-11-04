@@ -1,0 +1,75 @@
+# Jev-toolkit-Monitor (EXPERIMENTAL)
+
+An outside monitor for a Claude Code agent, in the spirit of a firewall / IDS / IPS. It watches what the **agent** does (its tool calls, never your typing) and compares that with your instructions and a small policy file: edits to the agent's own instruction files, writes outside the project, outbound network targets that are not on a list, persistence, secret reads followed by uploads, rate and volume spikes, and shell shapes it cannot analyse. The response ladder is **log, warn, block, kill**; kill is the last rung and is always logged. The rules live outside the agent's context, so context compaction cannot touch them. Deterministic checks decide first; an optional judgement model ([TypeSafe Jev](https://docs.typesafe.ai)) is a bounded second opinion for inconclusive cases only.
+
+Part of the Jev tool family; the shared judge layer lives in [Jev-toolkit-usage](https://github.com/Wrenik/Jev-toolkit-usage), and the siblings are [Compiler](https://github.com/Wrenik/Jev-toolkit-Compiler), [Scanner](https://github.com/Wrenik/Jev-toolkit-Scanner), [FactCheck](https://github.com/Wrenik/Jev-toolkit-FactCheck) and [Sources](https://github.com/Wrenik/Jev-toolkit-Sources). (Links work once the repositories are public.)
+
+## Status and limits: read this first
+
+This is a **learning project, not a security product**. **A monitor reduces risk. It does not make an agent safe.** Honest numbers, from [docs/AGENT_MONITOR.md](docs/AGENT_MONITOR.md):
+
+* It ships in **`monitor` mode**: it logs and warns, it blocks nothing, until you type `/jevmonitor mode enforce`. `python -m jev_monitor report` lists what it *would* have stopped.
+* **You cannot be locked out**: only the agent's tool calls are judged, never your prompts or slash commands. If the agent was stopped, `/jevmonitor reset` or `python -m jev_monitor reset` from any terminal clears it, and the latch expires by itself.
+* On the scenarios the rules were tuned on: 32/32 attacks caught, 0 false alarms. On **frozen held-out sets, first run**: 26/28 and 19/30 attacks caught, with 21/24 and 20/20 benign calls clean. After generic fixes the numbers rise (27/28 and 28/30), but those are no longer clean held-out numbers. The author wrote both the rules and the scenarios, so all of this flatters the monitor.
+* The policy, state and log live in a folder the agent can write to; the guarantee is "detects and logs the obvious routes", not "prevents". Known bypasses (script files, allowlisted-host exfiltration, MCP and subagent paths, DNS exfiltration, mass harvesting, no view of the model's thinking ...) are listed in the doc.
+* Verified in a real **headless** Claude Code session (block, note and kill all behaved as designed). Not verified: desktop pop-ups, typed `/jevmonitor` commands, subagent and parallel calls, long sessions, real WebFetch/MCP traffic. The doc has a 5-minute checklist.
+
+## Privacy
+
+Everything runs on your machine except the optional second opinion: for inconclusive (medium-severity) calls only, a redacted one-line summary of the call plus a redacted 80-character summary of your task is sent to TypeSafe. No raw prompts are stored or sent. `[judge] enabled = false` in the policy file, or `JEV_MONITOR_JUDGE=off`, keeps everything local, and without a key nothing is ever sent. **Jev is used because it is the only model of its kind on the market today, not because sending text to a US company is the goal. The plan is to replace it with a local model or a European provider** through the `Judge` interface in `jev_core`; this repository never imports the TypeSafe SDK. Jev's data location is not stated in its documentation (checked 2026-10-30).
+
+## Install
+
+Requires Python 3.11+ and the base package [Jev-toolkit-usage](https://github.com/Wrenik/Jev-toolkit-usage) (the judge layer, settings and data location).
+
+```bash
+# from clones (works today, before anything is public)
+python -m venv .venv
+.venv/Scripts/python -m pip install -e ../Jev-toolkit-usage      # Windows; use .venv/bin/python elsewhere
+.venv/Scripts/python -m pip install -e ".[dev]" --no-deps
+# once the repositories are public
+pip install "git+https://github.com/Wrenik/Jev-toolkit-Monitor.git"
+```
+
+Data (policy, state, log, the optional TypeSafe key in `.env`) lives in `JEV_HOME` (default `~/.jev-toolkit`), shared with the other tools; `JEV_MONITOR_VAR` overrides the folder for this tool, and a `.env` or `var/` folder in the current directory wins during development.
+
+## Try it in 60 seconds (offline, no key)
+
+```bash
+python -m jev_monitor check Bash '{"command": "echo x >> CLAUDE.md"}'   # what would it say? (instruction-file change)
+python -m jev_monitor eval                                               # the hand-built scenario sets, with counts
+python -m jev_monitor policy-check                                       # validates your policy file, if you have one
+python -m pytest                                                         # all tests, offline
+```
+
+## The Claude Code mod (`jev-monitor`)
+
+Needs Claude Code with mod support (`claude plugin --help`) and `python` on PATH with this package installed (set `JEV_PYTHON` or the mod's `python` option to use another interpreter). The mod starts `python -m jev_monitor serve` (127.0.0.1:8767) itself and needs no path to a checkout.
+
+```
+/plugin marketplace add Wrenik/Jev-toolkit-Monitor
+/plugin install jev-monitor --marketplace Wrenik/Jev-toolkit-Monitor
+```
+
+or load it from a clone via `CLAUDE_CODE_PLUGIN_DIRS=<clone>/claude-mod/jev-monitor`. `/jevmonitor` shows status, `mode monitor|enforce`, `allow` (let the last held call through once), `reset`, `report` and `off`/`on`. Mod tests: `claude plugin test claude-mod/jev-monitor`.
+
+## Layout
+
+```
+src/jev_monitor/        rules.py, shell.py (static bash/PowerShell analysis), paths.py, engine.py (ladder, modes,
+                        kill latch), policy.py, state.py, log.py, judge2.py, server.py, evaluate.py + evalset/
+claude-mod/jev-monitor/ the Claude Code mod (TypeScript), example policy, and its tests
+docs/AGENT_MONITOR.md   design, hooks verified vs not, checks, path matrix, evaluation, known bypasses, prior art
+```
+
+## Prior art
+
+Credited in detail in the doc ("Prior art"): Claude Code hooks and permissions, Anthropic's auto mode, community PreToolUse guards, Meta's LlamaFirewall / AlignmentCheck, CaMeL, Invariant Labs Guardrails, Falco and IDS/IPS in general. No third-party code or rule list is copied; every rule and scenario is hand-written.
+
+## Contributing and feedback
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md). Bypasses and false alarms (with inert examples) are the most useful reports.
+
+## License
+
+MIT, see [LICENSE](LICENSE).

@@ -1,0 +1,30 @@
+[project]
+name = "jev-toolkit-monitor"
+version = "0.1.0"
+description = "EXPERIMENTAL outside monitor for a Claude Code agent's own tool calls: deterministic rules, a response ladder (log, warn, block, kill) and an optional judgement-model second opinion (currently TypeSafe Jev)."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Eric Ährlund" }]
+requires-python = ">=3.11"
+dependencies = [
+    "jev-toolkit-usage @ git+https://github.com/Wrenik/Jev-toolkit-usage.git",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+jev_monitor = ["evalset/*.toml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["live: calls the real Jev API (costs a fraction of a cent; needs TYPESAFE_API_KEY)"]
+addopts = "-m 'not live'"

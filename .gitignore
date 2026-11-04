@@ -1,0 +1,14 @@
+.env
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+# Decision logs and caches can contain hashes of private prompts; keep them local.
+var/
+spikes/*.txt
+# Generated type stubs for the mod API; they list the author's connected tools.
+claude-mod/*/.claude-plugin/types/
+# Throwaway experiment output
+spikes/
+*.pyc
+node_modules/

@@ -2,7 +2,7 @@
   "name": "jev-toolkit-monitor",
   "description": "EXPERIMENTAL Claude Code mod that watches the agent's own tool calls and flags or blocks risky ones.",
   "owner": {
-    "name": "AUTHOR_NAME_TODO"
+    "name": "Eric Ährlund"
   },
   "plugins": [
     {

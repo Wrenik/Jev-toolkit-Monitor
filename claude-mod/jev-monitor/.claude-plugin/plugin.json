@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "EXPERIMENTAL. Watches the agent's own tool calls (not your typing): flags or blocks edits to its instruction files, writes outside the project, unlisted network targets and other risky shapes. Starts in monitor mode (log and warn only). Reduces risk; does not make an agent safe.",
   "author": {
-    "name": "AUTHOR_NAME_TODO"
+    "name": "Eric Ährlund"
   },
   "license": "MIT",
   "userConfig": {

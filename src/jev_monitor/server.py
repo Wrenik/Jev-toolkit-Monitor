@@ -15,14 +15,14 @@ import hashlib
 import json
 import os
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any
 
 import jev_core
 from jev_core import JudgeConfigError, default_judge
 from jev_core.config import var_path
-from jev_core.localserver import GuardedHandler
+from jev_core.localserver import GuardedHandler, GuardedServer
 
 from .engine import Monitor
 from .log import MonitorLog, read_records, would_block_report
@@ -188,7 +188,7 @@ def make_handler(m: Monitor, var_dir: Path) -> type[BaseHTTPRequestHandler]:
 def serve(port: int = DEFAULT_PORT, var_dir: str | Path | None = None) -> None:
     var = Path(var_dir).resolve() if var_dir else var_path()
     monitor = build_monitor(var)  # a broken policy raises here: no server, the mod fails closed (when enforcing)
-    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(monitor, var))
+    server = GuardedServer(("127.0.0.1", port), make_handler(monitor, var))
     print(
         f"jev_monitor listening on 127.0.0.1:{port} (mode {monitor.state.mode_override() or monitor.policy.mode}, "
         f"judge={monitor.second.judge.name if monitor.second else 'none'}, code {code_version()})",

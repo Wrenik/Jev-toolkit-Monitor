@@ -12,3 +12,5 @@ claude-mod/*/.claude-plugin/types/
 spikes/
 *.pyc
 node_modules/
+build/
+dist/

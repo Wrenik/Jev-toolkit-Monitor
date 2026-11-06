@@ -5,8 +5,6 @@
 ![status](https://img.shields.io/badge/status-experimental-red)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-(The badges start working once the repository is public.)
-
 An outside monitor for a Claude Code agent, in the spirit of a firewall / IDS / IPS. It watches what the **agent** does (its tool calls, never your typing) and compares that with your instructions and a small policy file: edits to the agent's own instruction files, writes outside the project, outbound network targets that are not on a list, persistence, secret reads followed by uploads, rate and volume spikes, and shell shapes it cannot analyse. The response ladder is **log, warn, block, kill**; kill is the last rung and is always logged. The rules live outside the agent's context, so context compaction cannot touch them. Deterministic checks decide first; an optional judgement model ([TypeSafe Jev](https://docs.typesafe.ai)) is a bounded second opinion for inconclusive cases only.
 
 ## Status and limits
@@ -27,13 +25,10 @@ Want all six tools? Use [the install script](https://github.com/Wrenik/Jev-toolk
 Requires Python 3.11+ and the base package [Jev-toolkit-usage](https://github.com/Wrenik/Jev-toolkit-usage) (the judge layer, settings and data location).
 
 ```bash
-# from clones (works today, before anything is public)
 python -m venv .venv
-.venv/Scripts/python -m pip install -e ../Jev-toolkit-usage      # Windows; use .venv/bin/python elsewhere
-.venv/Scripts/python -m pip install -e . --no-deps
-.venv/Scripts/python -m pip install pytest                      # only needed to run the tests
-# once the repositories are public
-pip install "git+https://github.com/Wrenik/Jev-toolkit-Monitor.git"
+.venv/Scripts/python -m pip install "git+https://github.com/Wrenik/Jev-toolkit-Monitor.git"   # Windows; use .venv/bin/python elsewhere
+# development, from clones side by side:
+#   pip install -e ../Jev-toolkit-usage && pip install -e ".[dev]"
 ```
 
 Data (policy, state, log, the optional TypeSafe key in `.env`) lives in `JEV_HOME` (default `~/.jev-toolkit`), shared with the other tools; `JEV_MONITOR_VAR` overrides the folder for this tool, and a `.env` or `var/` folder in the current directory wins during development.
@@ -98,7 +93,7 @@ Credited in detail in the doc ("Prior art"): Claude Code hooks and permissions, 
 | [Jev-toolkit-FactCheck](https://github.com/Wrenik/Jev-toolkit-FactCheck) | fact checker with hover evidence | usage (Scanner optional) |
 | [Jev-toolkit-Sources](https://github.com/Wrenik/Jev-toolkit-Sources) | source restriction (allowlist policy) | usage, FactCheck |
 
-All six on one machine: [docs/INSTALL_ALL.md](https://github.com/Wrenik/Jev-toolkit-usage/blob/main/docs/INSTALL_ALL.md) (a script does it). The links work once the repositories are public.
+All six on one machine: [docs/INSTALL_ALL.md](https://github.com/Wrenik/Jev-toolkit-usage/blob/main/docs/INSTALL_ALL.md) (a script does it). All six repositories are public.
 
 ## Contributing, security, license
 

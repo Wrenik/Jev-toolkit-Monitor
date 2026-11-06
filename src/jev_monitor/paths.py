@@ -76,7 +76,7 @@ def _long_name(path: str) -> str:
         import ctypes
 
         buf = ctypes.create_unicode_buffer(32768)
-        n = getattr(ctypes, "windll").kernel32.GetLongPathNameW(path, buf, 32768)
+        n = getattr(ctypes, "windll").kernel32.GetLongPathNameW(path, buf, 32768)  # noqa: B009 (windll is Windows-only for mypy)
         return buf.value if 0 < n < 32768 else path
     except Exception:  # noqa: BLE001
         return path

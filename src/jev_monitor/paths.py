@@ -35,9 +35,10 @@ _HOME_VARS = {"home": "HOME", "userprofile": "USERPROFILE"}
 
 @dataclass(frozen=True)
 class Canon:
-    path: str  # comparison form
+    path: str  # comparison form (case-folded where the host or the shell's paths are case-insensitive)
     ambiguous: bool = False  # an unresolved variable or short name: could be any path
     why: str = ""
+    shown: str = ""  # the same path with its case kept, for messages (empty when `path` is already that)
 
 
 def home_dir(env: dict[str, str] | None = None) -> str:
@@ -83,10 +84,25 @@ def _long_name(path: str) -> str:
 
 
 def canon(
-    raw: str, cwd: str, env: dict[str, str] | None = None, win: bool | None = None, resolve: bool = True
+    raw: str,
+    cwd: str,
+    env: dict[str, str] | None = None,
+    win: bool | None = None,
+    resolve: bool = True,
+    fold: bool | None = None,
 ) -> Canon:
-    """Normalise `raw` as seen from `cwd`. `win` forces Windows or POSIX rules (tests)."""
+    """Normalise `raw` as seen from `cwd`.
+
+    `win` selects the shell's path *syntax* (backslashes, drive letters, `%VAR%`): PowerShell and cmd text means
+    the same on every host. The filesystem rules stay the host's: when `win` is set on a POSIX host and `cwd` is a
+    POSIX folder (PowerShell running on Linux), only the syntax is Windows and the path is resolved and compared
+    like any POSIX path. `fold` forces case folding on or off (tests); by default it follows the filesystem
+    (Windows, macOS: fold; Linux: exact case).
+    """
     win = IS_WINDOWS if win is None else win
+    if win and not IS_WINDOWS and not _is_abs(cwd.replace("\\", "/"), True):
+        raw = raw.replace("\\", "/")  # Windows syntax, POSIX filesystem
+        win = False
     if len(raw) > MAX_PATH_CHARS:
         return Canon(raw[:80], True, "path is absurdly long")
     env = env if env is not None else dict(os.environ)
@@ -119,12 +135,13 @@ def canon(
     if resolve and (win == IS_WINDOWS):
         with contextlib.suppress(OSError):
             text = os.path.realpath(text).replace("\\", "/") if win else os.path.realpath(text)
-    if win or (FOLD_CASE and win == IS_WINDOWS):
+    shown = text
+    if fold if fold is not None else (win or (FOLD_CASE and win == IS_WINDOWS)):
         text = text.casefold()
     if win:
         text = text.removeprefix("//?/")
     ambiguous = bool(_SHORT83.search(text)) and win
-    return Canon(text, ambiguous, "unresolved 8.3 short name" if ambiguous else "")
+    return Canon(text, ambiguous, "unresolved 8.3 short name" if ambiguous else "", "" if shown == text else shown)
 
 
 def _is_abs(text: str, win: bool) -> bool:
@@ -158,7 +175,12 @@ def _glob_regex(pattern: str) -> re.Pattern:
 
 
 def glob_match(
-    path: str, pattern: str, cwd: str = "", win: bool | None = None, env: dict[str, str] | None = None
+    path: str,
+    pattern: str,
+    cwd: str = "",
+    win: bool | None = None,
+    env: dict[str, str] | None = None,
+    fold: bool | None = None,
 ) -> bool:
     """Match canonical `path` against a policy glob.
 
@@ -168,7 +190,7 @@ def glob_match(
     win = IS_WINDOWS if win is None else win
     pat, _ = _expand(pattern, env if env is not None else dict(os.environ), win)
     pat = pat.replace("\\", "/")
-    if win or (FOLD_CASE and win == IS_WINDOWS):
+    if fold if fold is not None else (win or (FOLD_CASE and win == IS_WINDOWS)):
         pat = pat.casefold()
     if (
         not _is_abs(pat, win)

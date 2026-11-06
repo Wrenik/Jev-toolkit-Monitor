@@ -25,6 +25,7 @@ MONITOR_PORT = 8767
 TAINT_PER_SESSION = 32
 TAINT_SESSIONS = 256
 _EDIT_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
+_WIN_SHELL_WORD = re.compile(r"(?i)(?<![\w.-])(?:powershell|pwsh|cmd)(?:\.exe)?(?![\w.-])")
 DEFAULT_CANARY = re.compile(r"JEVCANARY-[A-Za-z0-9]{6,}")
 _PERSISTENCE = [
     "~/.bashrc",
@@ -48,6 +49,9 @@ _PERSISTENCE = [
     "~/.local/share/systemd/**",
     "~/Library/LaunchAgents/**",
     "/etc/**",
+    "/private/etc/**",  # macOS: /etc is a link to /private/etc, and canonical paths are resolved
+    "/private/var/at/**",
+    "/private/var/root/**",
     "/usr/**",
     "/bin/**",
     "/sbin/**",
@@ -195,8 +199,18 @@ def ip_kind(host: str) -> str:
 def _temp_roots() -> tuple[str, ...]:
     """Scratch folders count as in scope. Computed once: resolving `/dev/shm` & co. on Windows costs ~0.5 s each."""
     out = [paths.canon(tempfile.gettempdir(), "/", resolve=True).path]
-    out += [paths.canon(r, "/", resolve=False).path for r in ("/tmp", "/var/tmp", "/dev/shm")]
+    # macOS resolves /tmp to /private/tmp, so the resolved form must be listed too; on Windows resolving costs ~0.5 s each
+    out += [paths.canon(r, "/", resolve=not paths.IS_WINDOWS).path for r in _POSIX_TEMPS]
     return tuple(dict.fromkeys(out))
+
+
+_POSIX_TEMPS = ("/tmp", "/var/tmp", "/dev/shm")
+
+
+def _in_posix_temp(p: str) -> bool:
+    """`/tmp/x` typed on Windows (git-bash, WSL-style) lands on whatever drive the project is on; it is scratch either way."""
+    bare = re.sub(r"^[a-z]:", "", p)
+    return paths.IS_WINDOWS and any(paths.under(bare, t) for t in _POSIX_TEMPS)
 
 
 class Tracker:
@@ -396,6 +410,8 @@ class _Checker:
         self.home = paths.canon("~", call.cwd).path
         self.temps = list(_temp_roots())
         self.extras = [paths.canon(d, call.cwd).path for d in policy.extra_write_dirs]
+        cmd = call.input.get("command")
+        self.win_syntax = call.tool == "PowerShell" or (isinstance(cmd, str) and bool(_WIN_SHELL_WORD.search(cmd)))
         self.secret_touch = False
         self._secret_keys: set[str] = set()
         self.hosts: list[str] = []
@@ -415,7 +431,8 @@ class _Checker:
             self._secret_keys.add(key)
 
     def classify(self, raw: str, cwd: str) -> paths.Canon:
-        return paths.canon(raw, cwd or self.call.cwd)
+        # PowerShell and cmd text keeps its Windows meaning on every host (`.\x`, `$env:X\y`); the filesystem stays the host's.
+        return paths.canon(raw, cwd or self.call.cwd, win=True if self.win_syntax else None)
 
     @property
     def blob(self) -> str:
@@ -549,7 +566,9 @@ class _Checker:
             once(Finding("log-tamper", HIGH, f"{via} changes a shell history or system log file ({label})"), p)
         elif self._persistence_hit(p, via):
             once(Finding("persistence-file", HIGH, f"{via} writes a startup/system file ({label})"), p)
-        elif not (paths.under(p, root) or any(paths.under(p, t) for t in self.temps + self.extras)):
+        elif not (
+            paths.under(p, root) or any(paths.under(p, t) for t in self.temps + self.extras) or _in_posix_temp(p)
+        ):
             sev = HIGH if kind == "delete" and recursive else MEDIUM
             once(
                 Finding(

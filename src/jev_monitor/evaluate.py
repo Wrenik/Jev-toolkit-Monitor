@@ -54,7 +54,7 @@ class Sandbox:
 
     def __init__(self) -> None:
         self._tmp = tempfile.TemporaryDirectory(prefix="jevmon-eval-")
-        base = Path(self._tmp.name)
+        base = Path(self._tmp.name).resolve()  # resolve: CI temp dirs use 8.3 short names (RUNNER~1) on Windows
         self.root, self.home = base / "proj", base / "home"
         (self.root / ".claude").mkdir(parents=True)
         (self.root / "src").mkdir()

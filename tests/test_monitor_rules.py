@@ -315,7 +315,7 @@ def test_canary_file_and_token(env):
 
 def test_scope_outside_project(env, tmp_path):
     # the system temp dir is in scope by design, so use a folder outside it
-    outside = "C:/Users/Public/jev-monitor-test" if os.name == "nt" else "/opt/jev-monitor-test"
+    outside = "C:/Users/Public/jev-monitor-test" if os.name == "nt" else "/srv/jev-monitor-test"
     out = outside + "/x.txt"
     f = run(env, "Write", file_path=out, content="x")
     assert "write-outside-scope" in rule_ids(f)

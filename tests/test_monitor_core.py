@@ -12,7 +12,9 @@ from jev_monitor.state import State
 
 # ---- paths: POSIX rules (explicit, independent of the host) ----------------
 def P(raw, cwd="/work/proj", **kw):
-    return paths.canon(raw, cwd, env=kw.pop("env", {"HOME": "/home/u"}), win=False, resolve=False, **kw).path
+    return paths.canon(
+        raw, cwd, env=kw.pop("env", {"HOME": "/home/u"}), win=False, resolve=False, fold=False, **kw
+    ).path
 
 
 def W(raw, cwd="C:/Work/Proj", env=None):
@@ -83,7 +85,7 @@ def test_symlink_resolves(tmp_path):
 
 def test_glob_anchoring_and_depth():
     def gm(p, pat):
-        return paths.glob_match(p, pat, win=False, env={"HOME": "/home/u"})
+        return paths.glob_match(p, pat, win=False, env={"HOME": "/home/u"}, fold=False)
 
     assert gm("/work/proj/CLAUDE.md", "CLAUDE.md")
     assert gm("/work/proj/sub/deep/CLAUDE.md", "CLAUDE.md")
